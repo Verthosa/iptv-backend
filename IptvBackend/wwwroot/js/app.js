@@ -550,8 +550,8 @@ class IptvApp {
             });
             const data = await response.json();
 
-            if (data.success) {
-                this.currentCategories = ['all', ...data.data];
+            if (data.success && data.data && data.data.categories) {
+                this.currentCategories = [{ id: 'all', title: 'All' }, ...data.data.categories];
                 this.renderCategories();
             }
         } catch (error) {
@@ -567,10 +567,15 @@ class IptvApp {
 
         this.currentCategories.forEach(category => {
             const btn = document.createElement('button');
-            btn.className = `category-btn ${category === 'all' ? 'active' : ''}`;
-            btn.textContent = category === 'all' ? 'All' : category;
+            const isAll = category.id === 'all';
+            const categoryId = isAll ? 'all' : category.id;
+            const categoryTitle = isAll ? 'All' : category.title;
+
+            btn.className = `category-btn ${isAll ? 'active' : ''}`;
+            btn.textContent = categoryTitle;
+            btn.dataset.categoryId = categoryId;
             btn.addEventListener('click', () => {
-                this.filterByCategory(category);
+                this.selectCategory(categoryId);
 
                 // Update active state
                 container.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
@@ -578,6 +583,53 @@ class IptvApp {
             });
             container.appendChild(btn);
         });
+    }
+
+    async selectCategory(categoryId) {
+        if (categoryId === 'all') {
+            await this.loadChannels();
+        } else {
+            await this.loadChannelsByCategory(categoryId);
+        }
+    }
+
+    async loadChannelsByCategory(categoryId) {
+        const portalId = document.getElementById('channel-portal-select').value;
+
+        if (!portalId) {
+            return;
+        }
+
+        this.currentPortalId = portalId;
+
+        try {
+            const channelsList = document.getElementById('channels-list');
+            if (channelsList) {
+                channelsList.innerHTML = '<div class="loading">Loading channels...</div>';
+            }
+
+            const response = await fetch(`${this.apiBaseUrl}/api/channels/portal/${portalId}?categoryId=${encodeURIComponent(categoryId)}`, {
+                credentials: 'include'
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                this.currentFilteredChannels = data.data.channels;
+                this.renderChannels();
+            } else {
+                this.showToast(data.error || 'Failed to load channels', 'error');
+                if (channelsList) {
+                    channelsList.innerHTML = '<div class="loading">Failed to load channels</div>';
+                }
+            }
+        } catch (error) {
+            console.error('Error loading channels by category:', error);
+            this.showToast('Error loading channels', 'error');
+            const channelsList = document.getElementById('channels-list');
+            if (channelsList) {
+                channelsList.innerHTML = '<div class="loading">Error loading channels</div>';
+            }
+        }
     }
 
     renderChannels() {
@@ -609,18 +661,6 @@ class IptvApp {
         this.currentFilteredChannels = this.currentChannels.filter(channel =>
             channel.name.toLowerCase().includes(query)
         );
-
-        this.renderChannels();
-    }
-
-    filterByCategory(category) {
-        if (category === 'all') {
-            this.currentFilteredChannels = this.currentChannels;
-        } else {
-            this.currentFilteredChannels = this.currentChannels.filter(channel =>
-                channel.category === category
-            );
-        }
 
         this.renderChannels();
     }

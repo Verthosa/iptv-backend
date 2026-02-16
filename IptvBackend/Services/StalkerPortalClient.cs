@@ -280,6 +280,7 @@ public class StalkerPortalClient
             if (item.TryGetProperty("category_id", out var categoryProp))
             {
                 var categoryId = categoryProp.GetString() ?? "";
+                channel.CategoryId = categoryId;
                 // Map category_id to category title
                 if (!string.IsNullOrEmpty(categoryId) && categoryMap.TryGetValue(categoryId, out var categoryTitle))
                 {
@@ -310,40 +311,31 @@ public class StalkerPortalClient
         }
     }
 
-    public async Task<List<string>> GetCategoriesAsync(Portal portal)
+    public async Task<List<Category>> GetCategoriesAsync(Portal portal)
     {
-        var categoryMap = await GetCategoryMapAsync(portal);
-        return categoryMap.Values.Distinct().OrderBy(c => c).ToList();
+        var session = await GetOrCreateSessionAsync(portal);
+        var categories = new List<Category>();
+
+        // Fetch all three category types
+        var itvCategories = await GetItvGenresAsync(portal, session.Token);
+        categories.AddRange(itvCategories);
+
+        var vodCategories = await GetVodCategoriesAsync(portal, session.Token);
+        categories.AddRange(vodCategories);
+
+        var seriesCategories = await GetSeriesCategoriesAsync(portal, session.Token);
+        categories.AddRange(seriesCategories);
+
+        return categories;
     }
 
     public async Task<Dictionary<string, string>> GetCategoryMapAsync(Portal portal)
     {
-        var session = await GetOrCreateSessionAsync(portal);
-        var categoryMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        // Fetch all three category types
-        var itvCategories = await GetItvGenresMapAsync(portal, session.Token);
-        foreach (var kvp in itvCategories)
-        {
-            categoryMap[kvp.Key] = kvp.Value;
-        }
-
-        var vodCategories = await GetVodCategoriesMapAsync(portal, session.Token);
-        foreach (var kvp in vodCategories)
-        {
-            categoryMap[kvp.Key] = kvp.Value;
-        }
-
-        var seriesCategories = await GetSeriesCategoriesMapAsync(portal, session.Token);
-        foreach (var kvp in seriesCategories)
-        {
-            categoryMap[kvp.Key] = kvp.Value;
-        }
-
-        return categoryMap;
+        var categories = await GetCategoriesAsync(portal);
+        return categories.ToDictionary(c => c.Id, c => c.Title, StringComparer.OrdinalIgnoreCase);
     }
 
-    private async Task<Dictionary<string, string>> GetItvGenresMapAsync(Portal portal, string token)
+    private async Task<List<Category>> GetItvGenresAsync(Portal portal, string token)
     {
         var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=itv&action=get_genres&JsHttpRequest=1-xml";
 
@@ -358,7 +350,7 @@ public class StalkerPortalClient
         var responseBody = await response.Content.ReadAsStringAsync();
         _logger.LogDebug("ITv genres response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
 
-        var categories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var categories = new List<Category>();
 
         using var doc = JsonDocument.Parse(responseBody);
 
@@ -366,22 +358,21 @@ public class StalkerPortalClient
         {
             foreach (var item in jsElement.EnumerateArray())
             {
-                string? id = null;
-                string? title = null;
+                var category = new Category { Type = "itv" };
 
                 if (item.TryGetProperty("id", out var idElement))
                 {
-                    id = idElement.GetString();
+                    category.Id = idElement.GetString() ?? "";
                 }
 
                 if (item.TryGetProperty("title", out var titleElement))
                 {
-                    title = titleElement.GetString();
+                    category.Title = titleElement.GetString() ?? "";
                 }
 
-                if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(title))
+                if (!string.IsNullOrEmpty(category.Id) && !string.IsNullOrEmpty(category.Title))
                 {
-                    categories[id] = title;
+                    categories.Add(category);
                 }
             }
         }
@@ -389,7 +380,7 @@ public class StalkerPortalClient
         return categories;
     }
 
-    private async Task<Dictionary<string, string>> GetVodCategoriesMapAsync(Portal portal, string token)
+    private async Task<List<Category>> GetVodCategoriesAsync(Portal portal, string token)
     {
         var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=vod&action=get_categories&JsHttpRequest=1-xml";
 
@@ -404,7 +395,7 @@ public class StalkerPortalClient
         var responseBody = await response.Content.ReadAsStringAsync();
         _logger.LogDebug("VOD categories response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
 
-        var categories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var categories = new List<Category>();
 
         using var doc = JsonDocument.Parse(responseBody);
 
@@ -412,22 +403,21 @@ public class StalkerPortalClient
         {
             foreach (var item in jsElement.EnumerateArray())
             {
-                string? id = null;
-                string? title = null;
+                var category = new Category { Type = "vod" };
 
                 if (item.TryGetProperty("id", out var idElement))
                 {
-                    id = idElement.GetString();
+                    category.Id = idElement.GetString() ?? "";
                 }
 
                 if (item.TryGetProperty("title", out var titleElement))
                 {
-                    title = titleElement.GetString();
+                    category.Title = titleElement.GetString() ?? "";
                 }
 
-                if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(title))
+                if (!string.IsNullOrEmpty(category.Id) && !string.IsNullOrEmpty(category.Title))
                 {
-                    categories[id] = title;
+                    categories.Add(category);
                 }
             }
         }
@@ -435,7 +425,7 @@ public class StalkerPortalClient
         return categories;
     }
 
-    private async Task<Dictionary<string, string>> GetSeriesCategoriesMapAsync(Portal portal, string token)
+    private async Task<List<Category>> GetSeriesCategoriesAsync(Portal portal, string token)
     {
         var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=series&action=get_categories&JsHttpRequest=1-xml";
 
@@ -450,7 +440,7 @@ public class StalkerPortalClient
         var responseBody = await response.Content.ReadAsStringAsync();
         _logger.LogDebug("Series categories response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
 
-        var categories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var categories = new List<Category>();
 
         using var doc = JsonDocument.Parse(responseBody);
 
@@ -461,22 +451,21 @@ public class StalkerPortalClient
             {
                 foreach (var item in jsElement.EnumerateArray())
                 {
-                    string? id = null;
-                    string? title = null;
+                    var category = new Category { Type = "series" };
 
                     if (item.TryGetProperty("id", out var idElement))
                     {
-                        id = idElement.GetString();
+                        category.Id = idElement.GetString() ?? "";
                     }
 
                     if (item.TryGetProperty("title", out var titleElement))
                     {
-                        title = titleElement.GetString();
+                        category.Title = titleElement.GetString() ?? "";
                     }
 
-                    if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(title))
+                    if (!string.IsNullOrEmpty(category.Id) && !string.IsNullOrEmpty(category.Title))
                     {
-                        categories[id] = title;
+                        categories.Add(category);
                     }
                 }
             }
