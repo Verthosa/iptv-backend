@@ -38,40 +38,28 @@ public class StalkerPortalClient
         var mac = macAddress.Replace(":", "").ToUpper();
         using var md5 = MD5.Create();
         var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(mac));
-        return Convert.ToHexString(hash).Substring(0, 13).ToUpper();
+        return BitConverter.ToString(hash).Replace("-", "").Substring(0, 13).ToUpper();
     }
 
     private string GenerateDeviceId(string macAddress)
     {
         using var sha256 = SHA256.Create();
         var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(macAddress));
-        return Convert.ToHexString(hash).Substring(0, 32).ToUpper();
+        return BitConverter.ToString(hash).Replace("-", "").Substring(0, 32).ToUpper();
     }
 
     private string GenerateDeviceId2(string macAddress)
     {
         using var sha256 = SHA256.Create();
         var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(macAddress + "device2"));
-        return Convert.ToHexString(hash).Substring(0, 32).ToUpper();
+        return BitConverter.ToString(hash).Replace("-", "").Substring(0, 32).ToUpper();
     }
 
     private string GenerateSignature(string macAddress)
     {
         using var sha256 = SHA256.Create();
         var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(macAddress + "sig"));
-        return Convert.ToHexString(hash).Substring(0, 32).ToUpper();
-    }
-
-    private Dictionary<string, string> GetBaseHeaders(string macAddress)
-    {
-        return new Dictionary<string, string>
-        {
-            ["User-Agent"] = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
-            ["X-User-Agent"] = "Model: MAG250; Link: WiFi",
-            ["Accept"] = "*/*",
-            ["Accept-Language"] = "en-US,en;q=0.9",
-            ["Cookie"] = $"mac={HttpUtility.UrlEncode(macAddress)}; stb_lang=en; timezone=Europe/Amsterdam"
-        };
+        return BitConverter.ToString(hash).Replace("-", "").Substring(0, 32).ToUpper();
     }
 
     private async Task<PortalSession> GetOrCreateSessionAsync(Portal portal)
@@ -105,7 +93,7 @@ public class StalkerPortalClient
             ["JsHttpRequest"] = "1-xml"
         });
 
-        var handshakeHeaders = GetBaseHeaders(portal.MacAddress);
+        var handshakeHeaders = GetHandshakeHeaders(portal.MacAddress);
 
         _logger.LogDebug("Sending handshake request to {Url}", handshakeUrl);
         var response = await SendRequestAsync(handshakeUrl, handshakeHeaders);
@@ -129,21 +117,52 @@ public class StalkerPortalClient
         return new PortalSession(token, expiry, serialNumber, deviceId, deviceId2, signature);
     }
 
+    private Dictionary<string, string> GetHandshakeHeaders(string macAddress)
+    {
+        // The cookie format is critical for Stalker portals
+        var cookie = $"mac={HttpUtility.UrlEncode(macAddress)}; stb_lang=en; timezone=Europe/Amsterdam";
+
+        return new Dictionary<string, string>
+        {
+            ["User-Agent"] = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
+            ["X-User-Agent"] = "Model: MAG250; Link: WiFi",
+            ["Accept"] = "*/*",
+            ["Accept-Language"] = "en-US,en;q=0.9",
+            ["Cookie"] = cookie
+        };
+    }
+
+    private Dictionary<string, string> GetAuthHeaders(string macAddress, string token)
+    {
+        var cookie = $"mac={HttpUtility.UrlEncode(macAddress)}; stb_lang=en; timezone=Europe/Amsterdam";
+
+        return new Dictionary<string, string>
+        {
+            ["User-Agent"] = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
+            ["X-User-Agent"] = "Model: MAG250; Link: WiFi",
+            ["Accept"] = "*/*",
+            ["Accept-Language"] = "en-US,en;q=0.9",
+            ["Cookie"] = cookie,
+            ["Authorization"] = $"Bearer {token}"
+        };
+    }
+
     private async Task GetProfileAsync(Portal portal, string token)
     {
+        // Include token in query string as some portals require it
         var profileUrl = BuildUrl(portal.PortalUrl, new Dictionary<string, string>
         {
             ["type"] = "stb",
             ["action"] = "get_profile",
-            ["JsHttpRequest"] = "1-xml"
+            ["JsHttpRequest"] = "1-xml",
+            ["token"] = token
         });
 
-        var profileHeaders = GetBaseHeaders(portal.MacAddress);
-        profileHeaders["Authorization"] = $"Bearer {token}";
+        var profileHeaders = GetAuthHeaders(portal.MacAddress, token);
 
         _logger.LogDebug("Sending get_profile request to {Url}", profileUrl);
         var response = await SendRequestAsync(profileUrl, profileHeaders);
-        _logger.LogDebug("Get profile response: {Response}", response);
+        _logger.LogDebug("Get profile response: {Response}", response[..Math.Min(500, response.Length)]);
 
         // Check if response contains error
         if (response.Contains("""error""") || response.Contains("""wrong"""))
@@ -173,6 +192,9 @@ public class StalkerPortalClient
     private string BuildUrl(string baseUrl, Dictionary<string, string> parameters)
     {
         var baseUri = baseUrl.TrimEnd('/');
+
+        // Some portals use /portal.php, others use /stalker_portal/server/api/ or different paths
+        // Try the standard path first
         var portalPhpUrl = $"{baseUri}/portal.php";
 
         var uriBuilder = new UriBuilder(portalPhpUrl);
@@ -191,6 +213,7 @@ public class StalkerPortalClient
     {
         var session = await GetOrCreateSessionAsync(portal);
 
+        // Include token in query string as some portals require it
         var url = BuildUrl(portal.PortalUrl, new Dictionary<string, string>
         {
             ["type"] = "itv",
@@ -200,49 +223,91 @@ public class StalkerPortalClient
             ["fav"] = "0",
             ["sortby"] = "number",
             ["p"] = "1",
-            ["JsHttpRequest"] = "1-xml"
+            ["JsHttpRequest"] = "1-xml",
+            ["token"] = session.Token
         });
 
-        var headers = GetBaseHeaders(portal.MacAddress);
-        headers["Authorization"] = $"Bearer {session.Token}";
+        var headers = GetAuthHeaders(portal.MacAddress, session.Token);
 
         _logger.LogDebug("Getting channels from {Url}", url);
         var response = await SendRequestAsync(url, headers);
-        _logger.LogDebug("Channels response: {Response}", response[..Math.Min(500, response.Length)]);
+        _logger.LogDebug("Channels response: {Response}", response[..Math.Min(1000, response.Length)]);
 
-        var result = JsonSerializer.Deserialize<StalkerChannelResponse>(response, _jsonOptions);
-
-        if (result?.Js?.Data == null)
+        // Try to parse the response - Stalker portals can have different response structures
+        try
         {
+            var result = JsonSerializer.Deserialize<StalkerChannelResponse>(response, _jsonOptions);
+
+            if (result?.Js?.Data != null)
+            {
+                return result.Js.Data.Select(ch => new Channel
+                {
+                    Id = ch.Id.ToString(),
+                    Name = ch.Name,
+                    Number = ch.Number,
+                    Category = ch.CategoryId,
+                    Logo = ch.Logo,
+                    Cmd = ch.Cmd,
+                    Source = "mpegts"
+                }).ToList();
+            }
+
+            // Try alternative parsing if the structure is different
+            var doc = JsonDocument.Parse(response);
+            if (doc.RootElement.TryGetProperty("js", out var jsElement))
+            {
+                List<StalkerChannel>? channels = null;
+
+                // Try js.data first
+                if (jsElement.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Array)
+                {
+                    channels = JsonSerializer.Deserialize<List<StalkerChannel>>(dataElement.GetRawText(), _jsonOptions);
+                }
+                // Some portals return js directly as array
+                else if (jsElement.ValueKind == JsonValueKind.Array)
+                {
+                    channels = JsonSerializer.Deserialize<List<StalkerChannel>>(jsElement.GetRawText(), _jsonOptions);
+                }
+
+                if (channels != null)
+                {
+                    return channels.Select(ch => new Channel
+                    {
+                        Id = ch.Id.ToString(),
+                        Name = ch.Name,
+                        Number = ch.Number,
+                        Category = ch.CategoryId,
+                        Logo = ch.Logo,
+                        Cmd = ch.Cmd,
+                        Source = "mpegts"
+                    }).ToList();
+                }
+            }
+
             _logger.LogWarning("No channels found in response or invalid response structure");
             return new List<Channel>();
         }
-
-        return result.Js.Data.Select(ch => new Channel
+        catch (Exception ex)
         {
-            Id = ch.Id.ToString(),
-            Name = ch.Name,
-            Number = ch.Number,
-            Category = ch.CategoryId,
-            Logo = ch.Logo,
-            Cmd = ch.Cmd,
-            Source = "mpegts"
-        }).ToList();
+            _logger.LogError(ex, "Failed to parse channels response");
+            throw new InvalidOperationException($"Failed to parse channels: {ex.Message}");
+        }
     }
 
     public async Task<List<string>> GetCategoriesAsync(Portal portal)
     {
         var session = await GetOrCreateSessionAsync(portal);
 
+        // Include token in query string as some portals require it
         var url = BuildUrl(portal.PortalUrl, new Dictionary<string, string>
         {
             ["type"] = "itv",
             ["action"] = "get_genres",
-            ["JsHttpRequest"] = "1-xml"
+            ["JsHttpRequest"] = "1-xml",
+            ["token"] = session.Token
         });
 
-        var headers = GetBaseHeaders(portal.MacAddress);
-        headers["Authorization"] = $"Bearer {session.Token}";
+        var headers = GetAuthHeaders(portal.MacAddress, session.Token);
 
         _logger.LogDebug("Getting categories from {Url}", url);
         var response = await SendRequestAsync(url, headers);
@@ -287,6 +352,7 @@ public class StalkerPortalClient
             throw new InvalidOperationException($"Channel {channelId} not found");
         }
 
+        // Include token in query string as some portals require it
         var url = BuildUrl(portal.PortalUrl, new Dictionary<string, string>
         {
             ["type"] = "itv",
@@ -296,11 +362,11 @@ public class StalkerPortalClient
             ["forced_storage"] = "undefined",
             ["disable_ad"] = "0",
             ["download"] = "0",
-            ["JsHttpRequest"] = "1-xml"
+            ["JsHttpRequest"] = "1-xml",
+            ["token"] = session.Token
         });
 
-        var headers = GetBaseHeaders(portal.MacAddress);
-        headers["Authorization"] = $"Bearer {session.Token}";
+        var headers = GetAuthHeaders(portal.MacAddress, session.Token);
 
         _logger.LogDebug("Creating stream link from {Url}", url);
         var response = await SendRequestAsync(url, headers);
@@ -310,6 +376,27 @@ public class StalkerPortalClient
 
         if (result?.Js?.Url == null)
         {
+            // Try alternative parsing
+            try
+            {
+                var doc = JsonDocument.Parse(response);
+                if (doc.RootElement.TryGetProperty("js", out var jsElement))
+                {
+                    if (jsElement.TryGetProperty("url", out var urlElement))
+                    {
+                        return urlElement.GetString() ?? throw new InvalidOperationException("Stream URL is empty");
+                    }
+                    if (jsElement.TryGetProperty("cmd", out var cmdElement))
+                    {
+                        return cmdElement.GetString() ?? throw new InvalidOperationException("Stream cmd is empty");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to parse stream URL from response");
+            }
+
             throw new InvalidOperationException("Failed to get stream URL from response");
         }
 

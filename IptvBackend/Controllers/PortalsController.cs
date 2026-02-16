@@ -225,7 +225,7 @@ public class PortalsController : ControllerBase
 
             // Test connection by getting channels
             var channels = await _stalkerClient.GetChannelsAsync(portal);
-            
+
             await _portalStore.UpdateLastConnectedAsync(id);
 
             return Ok(new ApiResponse<object>
@@ -233,6 +233,22 @@ public class PortalsController : ControllerBase
                 Success = true,
                 Data = new { channelCount = channels.Count },
                 Message = $"Portal connected successfully. Found {channels.Count} channels."
+            });
+        }
+        catch (HttpRequestException ex)
+        {
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Error = $"HTTP connection failed: {ex.Message}. Please verify the portal URL is correct and accessible."
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Error = $"Portal authentication failed: {ex.Message}. Please verify your MAC address is correct and authorized."
             });
         }
         catch (Exception ex)
