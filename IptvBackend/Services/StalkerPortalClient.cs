@@ -279,7 +279,9 @@ public class StalkerPortalClient
 
             if (item.TryGetProperty("category_id", out var categoryProp))
             {
-                var categoryId = categoryProp.GetString() ?? "";
+                var categoryId = categoryProp.ValueKind == JsonValueKind.Number
+                    ? categoryProp.GetInt32().ToString()
+                    : categoryProp.GetString() ?? "";
                 channel.CategoryId = categoryId;
                 // Map category_id to category title
                 if (!string.IsNullOrEmpty(categoryId) && categoryMap.TryGetValue(categoryId, out var categoryTitle))
