@@ -52,30 +52,4 @@ public class StreamProxyService
         }
     }
 
-    public HttpResponseMessage CreateProxyResponse(HttpResponseMessage upstreamResponse, string contentType = "video/mp2t")
-    {
-        var proxyResponse = new HttpResponseMessage();
-        
-        // Copy important headers for streaming
-        proxyResponse.Content = new PushStreamContent((stream, context) =>
-        {
-            upstreamResponse.Content.CopyToAsync(stream).Wait();
-        });
-        
-        proxyResponse.StatusCode = upstreamResponse.StatusCode;
-        
-        // Set streaming headers
-        proxyResponse.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
-        proxyResponse.Content.Headers.ContentLength = upstreamResponse.Content.Headers.ContentLength;
-        
-        // Add CORS headers for browser access
-        proxyResponse.Headers.Add("Access-Control-Allow-Origin", "*");
-        proxyResponse.Headers.Add("Access-Control-Allow-Methods", "GET, OPTIONS");
-        proxyResponse.Headers.Add("Access-Control-Allow-Headers", "Range");
-        
-        // No cache headers for live content
-        proxyResponse.Headers.Add("Cache-Control", "no-cache");
-        
-        return proxyResponse;
-    }
 }
