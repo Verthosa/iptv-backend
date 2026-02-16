@@ -210,13 +210,12 @@ public class StalkerPortalClient
 
     private async Task GetProfileAsync(Portal portal, string token, string endpointPath)
     {
-        // Include token in query string as some portals require it
+        // Don't include token in query string - rely on Authorization header only
         var profileUrl = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
         {
             ["type"] = "stb",
             ["action"] = "get_profile",
-            ["JsHttpRequest"] = "1-xml",
-            ["token"] = token
+            ["JsHttpRequest"] = "1-xml"
         });
 
         var profileHeaders = GetAuthHeaders(portal.MacAddress, token);
@@ -225,8 +224,10 @@ public class StalkerPortalClient
         var response = await SendRequestAsync(profileUrl, profileHeaders);
         _logger.LogDebug("Get profile response: {Response}", response[..Math.Min(500, response.Length)]);
 
-        // Check if response contains error
-        if (response.Contains("""error""") || response.Contains("""wrong"""))
+        // Check if response contains authorization errors
+        if (response.Contains("Authorization failed", StringComparison.OrdinalIgnoreCase) ||
+            response.Contains("""error""") ||
+            response.Contains("""wrong"""))
         {
             throw new InvalidOperationException($"Failed to get profile: {response}");
         }
@@ -282,7 +283,7 @@ public class StalkerPortalClient
         var session = await GetOrCreateSessionAsync(portal);
         var endpointPath = GetEndpointForPortal(portal);
 
-        // Include token in query string as some portals require it
+        // Don't include token in query string - rely on Authorization header only
         var url = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
         {
             ["type"] = "itv",
@@ -292,8 +293,7 @@ public class StalkerPortalClient
             ["fav"] = "0",
             ["sortby"] = "number",
             ["p"] = "1",
-            ["JsHttpRequest"] = "1-xml",
-            ["token"] = session.Token
+            ["JsHttpRequest"] = "1-xml"
         });
 
         var headers = GetAuthHeaders(portal.MacAddress, session.Token);
@@ -368,13 +368,12 @@ public class StalkerPortalClient
         var session = await GetOrCreateSessionAsync(portal);
         var endpointPath = GetEndpointForPortal(portal);
 
-        // Include token in query string as some portals require it
+        // Don't include token in query string - rely on Authorization header only
         var url = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
         {
             ["type"] = "itv",
             ["action"] = "get_genres",
-            ["JsHttpRequest"] = "1-xml",
-            ["token"] = session.Token
+            ["JsHttpRequest"] = "1-xml"
         });
 
         var headers = GetAuthHeaders(portal.MacAddress, session.Token);
@@ -423,7 +422,7 @@ public class StalkerPortalClient
             throw new InvalidOperationException($"Channel {channelId} not found");
         }
 
-        // Include token in query string as some portals require it
+        // Don't include token in query string - rely on Authorization header only
         var url = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
         {
             ["type"] = "itv",
@@ -433,8 +432,7 @@ public class StalkerPortalClient
             ["forced_storage"] = "undefined",
             ["disable_ad"] = "0",
             ["download"] = "0",
-            ["JsHttpRequest"] = "1-xml",
-            ["token"] = session.Token
+            ["JsHttpRequest"] = "1-xml"
         });
 
         var headers = GetAuthHeaders(portal.MacAddress, session.Token);
