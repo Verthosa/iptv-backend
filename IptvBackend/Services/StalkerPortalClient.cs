@@ -332,7 +332,18 @@ public class StalkerPortalClient
     public async Task<Dictionary<string, string>> GetCategoryMapAsync(Portal portal)
     {
         var categories = await GetCategoriesAsync(portal);
-        return categories.ToDictionary(c => c.Id, c => c.Title, StringComparer.OrdinalIgnoreCase);
+        var categoryMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var category in categories)
+        {
+            // Skip duplicates - first one wins
+            if (!categoryMap.ContainsKey(category.Id))
+            {
+                categoryMap[category.Id] = category.Title;
+            }
+        }
+
+        return categoryMap;
     }
 
     private async Task<List<Category>> GetItvGenresAsync(Portal portal, string token)
