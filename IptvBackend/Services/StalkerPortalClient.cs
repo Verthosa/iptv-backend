@@ -301,19 +301,35 @@ public class StalkerPortalClient
     public async Task<List<string>> GetCategoriesAsync(Portal portal)
     {
         var session = await GetOrCreateSessionAsync(portal);
+        var categories = new List<string>();
 
+        // Fetch all three category types
+        var itvCategories = await GetItvGenresAsync(portal, session.Token);
+        var vodCategories = await GetVodCategoriesAsync(portal, session.Token);
+        var seriesCategories = await GetSeriesCategoriesAsync(portal, session.Token);
+
+        categories.AddRange(itvCategories);
+        categories.AddRange(vodCategories);
+        categories.AddRange(seriesCategories);
+
+        // Remove duplicates and return
+        return categories.Distinct().ToList();
+    }
+
+    private async Task<List<string>> GetItvGenresAsync(Portal portal, string token)
+    {
         var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=itv&action=get_genres&JsHttpRequest=1-xml";
 
-        using var request = CreateRequest(portal.PortalUrl, portal.MacAddress, session.Token);
+        using var request = CreateRequest(portal.PortalUrl, portal.MacAddress, token);
         request.Method = HttpMethod.Get;
         request.RequestUri = new Uri(url);
 
-        _logger.LogDebug("Getting categories from {Url}", url);
+        _logger.LogDebug("Getting ITv genres from {Url}", url);
         var response = await _httpClient.SendAsync(request);
         response.EnsureSuccessStatusCode();
 
         var responseBody = await response.Content.ReadAsStringAsync();
-        _logger.LogDebug("Categories response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
+        _logger.LogDebug("ITv genres response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
 
         var categories = new List<string>();
 
@@ -331,6 +347,88 @@ public class StalkerPortalClient
                         categories.Add(title);
                     }
                 }
+            }
+        }
+
+        return categories;
+    }
+
+    private async Task<List<string>> GetVodCategoriesAsync(Portal portal, string token)
+    {
+        var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=vod&action=get_categories&JsHttpRequest=1-xml";
+
+        using var request = CreateRequest(portal.PortalUrl, portal.MacAddress, token);
+        request.Method = HttpMethod.Get;
+        request.RequestUri = new Uri(url);
+
+        _logger.LogDebug("Getting VOD categories from {Url}", url);
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var responseBody = await response.Content.ReadAsStringAsync();
+        _logger.LogDebug("VOD categories response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
+
+        var categories = new List<string>();
+
+        using var doc = JsonDocument.Parse(responseBody);
+
+        if (doc.RootElement.TryGetProperty("js", out var jsElement) && jsElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in jsElement.EnumerateArray())
+            {
+                if (item.TryGetProperty("title", out var titleElement))
+                {
+                    var title = titleElement.GetString();
+                    if (!string.IsNullOrEmpty(title))
+                    {
+                        categories.Add(title);
+                    }
+                }
+            }
+        }
+
+        return categories;
+    }
+
+    private async Task<List<string>> GetSeriesCategoriesAsync(Portal portal, string token)
+    {
+        var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=series&action=get_categories&JsHttpRequest=1-xml";
+
+        using var request = CreateRequest(portal.PortalUrl, portal.MacAddress, token);
+        request.Method = HttpMethod.Get;
+        request.RequestUri = new Uri(url);
+
+        _logger.LogDebug("Getting Series categories from {Url}", url);
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var responseBody = await response.Content.ReadAsStringAsync();
+        _logger.LogDebug("Series categories response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
+
+        var categories = new List<string>();
+
+        using var doc = JsonDocument.Parse(responseBody);
+
+        // Some servers return false or empty object when no series
+        if (doc.RootElement.TryGetProperty("js", out var jsElement))
+        {
+            if (jsElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in jsElement.EnumerateArray())
+                {
+                    if (item.TryGetProperty("title", out var titleElement))
+                    {
+                        var title = titleElement.GetString();
+                        if (!string.IsNullOrEmpty(title))
+                        {
+                            categories.Add(title);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                _logger.LogDebug("Series categories returned non-array: {ValueKind}", jsElement.ValueKind);
             }
         }
 
