@@ -168,10 +168,10 @@ public class StalkerPortalClient
 
         var response = await SendRequestAsync(url, headers);
         var result = JsonSerializer.Deserialize<StalkerChannelResponse>(response, _jsonOptions);
-        
-        if (result?.Js == null) return new List<Channel>();
 
-        return result.Js.Select(ch => new Channel
+        if (result?.Channels == null) return new List<Channel>();
+
+        return result.Channels.Select(ch => new Channel
         {
             Id = ch.Id.ToString(),
             Name = ch.Name,
