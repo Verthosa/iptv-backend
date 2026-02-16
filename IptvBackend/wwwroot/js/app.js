@@ -345,30 +345,51 @@ class IptvApp {
             return;
         }
 
-        container.innerHTML = this.portals.map(portal => `
-            <div class="portal-card">
+        // Clear container and build DOM elements properly to avoid HTML injection issues
+        container.innerHTML = '';
+
+        this.portals.forEach(portal => {
+            const card = document.createElement('div');
+            card.className = 'portal-card';
+
+            const lastConnectedHtml = portal.lastConnected
+                ? `<small>Last connected: ${new Date(portal.lastConnected).toLocaleDateString()}</small>`
+                : '';
+
+            card.innerHTML = `
                 <div class="portal-name">${this.escapeHtml(portal.name)}</div>
                 <div class="portal-url">${this.escapeHtml(portal.portalUrl)}</div>
                 <div class="portal-mac">MAC: ${this.escapeHtml(portal.macAddress)}</div>
                 <div class="portal-status ${portal.isActive ? 'online' : 'offline'}">
                     ${portal.isActive ? 'Active' : 'Inactive'}
                 </div>
-                ${portal.lastConnected ? `
-                    <small>Last connected: ${new Date(portal.lastConnected).toLocaleDateString()}</small>
-                ` : ''}
-                <div class="portal-actions">
-                    <button class="btn btn-sm btn-primary" onclick="app.testPortal('${portal.id}')">
-                        Test
-                    </button>
-                    <button class="btn btn-sm btn-success" onclick="app.loadPortalChannels('${portal.id}')">
-                        Load Channels
-                    </button>
-                    <button class="btn btn-sm btn-danger" onclick="app.deletePortal('${portal.id}')">
-                        Delete
-                    </button>
-                </div>
-            </div>
-        `).join('');
+                ${lastConnectedHtml}
+                <div class="portal-actions"></div>
+            `;
+
+            const actionsContainer = card.querySelector('.portal-actions');
+
+            // Create buttons with proper event listeners instead of inline onclick
+            const testBtn = document.createElement('button');
+            testBtn.className = 'btn btn-sm btn-primary';
+            testBtn.textContent = 'Test';
+            testBtn.addEventListener('click', () => this.testPortal(portal.id));
+            actionsContainer.appendChild(testBtn);
+
+            const loadBtn = document.createElement('button');
+            loadBtn.className = 'btn btn-sm btn-success';
+            loadBtn.textContent = 'Load Channels';
+            loadBtn.addEventListener('click', () => this.loadPortalChannels(portal.id));
+            actionsContainer.appendChild(loadBtn);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-sm btn-danger';
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.addEventListener('click', () => this.deletePortal(portal.id));
+            actionsContainer.appendChild(deleteBtn);
+
+            container.appendChild(card);
+        });
     }
 
     updatePortalSelect() {
@@ -542,23 +563,20 @@ class IptvApp {
         const container = document.querySelector('.category-filter');
         if (!container) return;
 
-        container.innerHTML = this.currentCategories.map(category => `
-            <button class="category-btn ${category === 'all' ? 'active' : ''}"
-                    data-category="${category}">
-                ${category === 'all' ? 'All' : category}
-            </button>
-        `).join('');
+        container.innerHTML = '';
 
-        // Add click events to category buttons
-        container.querySelectorAll('.category-btn').forEach(btn => {
+        this.currentCategories.forEach(category => {
+            const btn = document.createElement('button');
+            btn.className = `category-btn ${category === 'all' ? 'active' : ''}`;
+            btn.textContent = category === 'all' ? 'All' : category;
             btn.addEventListener('click', () => {
-                const category = btn.getAttribute('data-category');
                 this.filterByCategory(category);
 
                 // Update active state
                 container.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
             });
+            container.appendChild(btn);
         });
     }
 
@@ -571,12 +589,18 @@ class IptvApp {
             return;
         }
 
-        container.innerHTML = this.currentFilteredChannels.map(channel => `
-            <div class="channel-card" onclick="app.playChannel('${channel.id}', '${this.currentPortalId}')">
+        container.innerHTML = '';
+
+        this.currentFilteredChannels.forEach(channel => {
+            const card = document.createElement('div');
+            card.className = 'channel-card';
+            card.innerHTML = `
                 <div class="channel-number">${channel.number}</div>
                 <div class="channel-name" title="${this.escapeHtml(channel.name)}">${this.escapeHtml(channel.name)}</div>
-            </div>
-        `).join('');
+            `;
+            card.addEventListener('click', () => this.playChannel(channel.id, this.currentPortalId));
+            container.appendChild(card);
+        });
     }
 
     searchChannels() {
