@@ -6,37 +6,268 @@ class IptvApp {
         this.currentCategories = [];
         this.currentFilteredChannels = [];
         this.apiBaseUrl = window.location.origin;
-        
+
+        // Auth state
+        this.isAuthenticated = false;
+        this.currentUser = null;
+
         this.init();
     }
 
     async init() {
         this.setupEventListeners();
+        this.setupAuthTabs();
         this.setupTabs();
-        this.loadPortals();
+        this.setupVideoPlayer();
         this.updateApiUrl();
+
+        // Check authentication status
+        await this.checkAuth();
     }
+
+    // ========== Authentication Methods ==========
+
+    async checkAuth() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/auth/me`, {
+                credentials: 'include'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success) {
+                    this.isAuthenticated = true;
+                    this.currentUser = data.data;
+                    this.showMainContent();
+                    await this.loadPortals();
+                } else {
+                    this.showAuthContainer();
+                }
+            } else {
+                this.showAuthContainer();
+            }
+        } catch (error) {
+            console.error('Error checking auth:', error);
+            this.showAuthContainer();
+        }
+    }
+
+    async login(e) {
+        e.preventDefault();
+
+        const username = document.getElementById('login-username').value.trim();
+        const password = document.getElementById('login-password').value;
+
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                this.isAuthenticated = true;
+                this.currentUser = data.data;
+                this.showToast('Login successful', 'success');
+                document.getElementById('login-form').reset();
+                this.showMainContent();
+                await this.loadPortals();
+            } else {
+                this.showToast(data.error || 'Login failed', 'error');
+            }
+        } catch (error) {
+            console.error('Error logging in:', error);
+            this.showToast('Error connecting to server', 'error');
+        }
+    }
+
+    async register(e) {
+        e.preventDefault();
+
+        const username = document.getElementById('register-username').value.trim();
+        const email = document.getElementById('register-email').value.trim();
+        const password = document.getElementById('register-password').value;
+
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/auth/register`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify({ username, email, password })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                this.isAuthenticated = true;
+                this.currentUser = data.data;
+                this.showToast('Registration successful', 'success');
+                document.getElementById('register-form').reset();
+                this.showMainContent();
+                await this.loadPortals();
+            } else {
+                this.showToast(data.error || 'Registration failed', 'error');
+            }
+        } catch (error) {
+            console.error('Error registering:', error);
+            this.showToast('Error connecting to server', 'error');
+        }
+    }
+
+    async logout() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/auth/logout`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                this.isAuthenticated = false;
+                this.currentUser = null;
+                this.portals = [];
+                this.currentChannels = [];
+                this.showToast('Logged out successfully', 'success');
+                this.showAuthContainer();
+            } else {
+                this.showToast(data.error || 'Logout failed', 'error');
+            }
+        } catch (error) {
+            console.error('Error logging out:', error);
+            this.showToast('Error during logout', 'error');
+        }
+    }
+
+    async changePassword(e) {
+        e.preventDefault();
+
+        const currentPassword = document.getElementById('current-password').value;
+        const newPassword = document.getElementById('new-password').value;
+
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/auth/change-password`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify({ currentPassword, newPassword })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                this.showToast('Password changed successfully', 'success');
+                document.getElementById('change-password-form').reset();
+            } else {
+                this.showToast(data.error || 'Failed to change password', 'error');
+            }
+        } catch (error) {
+            console.error('Error changing password:', error);
+            this.showToast('Error connecting to server', 'error');
+        }
+    }
+
+    showAuthContainer() {
+        document.getElementById('auth-container').style.display = 'flex';
+        document.getElementById('main-content').classList.add('hidden');
+        this.updateAuthSection();
+    }
+
+    showMainContent() {
+        document.getElementById('auth-container').style.display = 'none';
+        document.getElementById('main-content').classList.remove('hidden');
+        this.updateAuthSection();
+    }
+
+    updateAuthSection() {
+        const authSection = document.getElementById('auth-section');
+        if (this.isAuthenticated && this.currentUser) {
+            authSection.innerHTML = `
+                <div class="user-info">
+                    <span>Welcome, <strong>${this.escapeHtml(this.currentUser.username)}</strong></span>
+                    <button class="btn btn-sm btn-secondary" onclick="app.logout()">Logout</button>
+                </div>
+            `;
+        } else {
+            authSection.innerHTML = '';
+        }
+    }
+
+    // ========== UI Setup Methods ==========
 
     setupEventListeners() {
         // Portal form
-        document.getElementById('add-portal-form').addEventListener('submit', this.addPortal.bind(this));
-        
+        const portalForm = document.getElementById('add-portal-form');
+        if (portalForm) {
+            portalForm.addEventListener('submit', this.addPortal.bind(this));
+        }
+
         // Portal selection
-        document.getElementById('channel-portal-select').addEventListener('change', this.loadChannels.bind(this));
-        
+        const portalSelect = document.getElementById('channel-portal-select');
+        if (portalSelect) {
+            portalSelect.addEventListener('change', this.loadChannels.bind(this));
+        }
+
         // Search functionality
-        document.getElementById('channel-search').addEventListener('input', this.searchChannels.bind(this));
-        
+        const searchInput = document.getElementById('channel-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', this.searchChannels.bind(this));
+        }
+
         // Modal
-        document.querySelector('.close').addEventListener('click', this.closeModal.bind(this));
+        const closeBtn = document.querySelector('.close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', this.closeModal.bind(this));
+        }
         window.addEventListener('click', (e) => {
             if (e.target.classList.contains('modal')) {
                 this.closeModal();
             }
         });
-        
-        // Video player
-        this.setupVideoPlayer();
+
+        // Auth forms
+        const loginForm = document.getElementById('login-form');
+        if (loginForm) {
+            loginForm.addEventListener('submit', this.login.bind(this));
+        }
+
+        const registerForm = document.getElementById('register-form');
+        if (registerForm) {
+            registerForm.addEventListener('submit', this.register.bind(this));
+        }
+
+        const changePasswordForm = document.getElementById('change-password-form');
+        if (changePasswordForm) {
+            changePasswordForm.addEventListener('submit', this.changePassword.bind(this));
+        }
+    }
+
+    setupAuthTabs() {
+        const authTabs = document.querySelectorAll('.auth-tab');
+        const authForms = document.querySelectorAll('.auth-form-container');
+
+        authTabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabName = tab.getAttribute('data-auth-tab');
+
+                // Remove active class from all tabs and forms
+                authTabs.forEach(t => t.classList.remove('active'));
+                authForms.forEach(f => f.classList.remove('active'));
+
+                // Add active class to clicked tab and corresponding form
+                tab.classList.add('active');
+                document.getElementById(`${tabName}-form-container`).classList.add('active');
+            });
+        });
     }
 
     setupTabs() {
@@ -46,11 +277,11 @@ class IptvApp {
         tabs.forEach(tab => {
             tab.addEventListener('click', () => {
                 const tabName = tab.getAttribute('data-tab');
-                
+
                 // Remove active class from all tabs and contents
                 tabs.forEach(t => t.classList.remove('active'));
                 tabContents.forEach(tc => tc.classList.remove('active'));
-                
+
                 // Add active class to clicked tab and corresponding content
                 tab.classList.add('active');
                 document.getElementById(`${tabName}-tab`).classList.add('active');
@@ -59,28 +290,39 @@ class IptvApp {
     }
 
     setupVideoPlayer() {
-        // Create video player container
-        const videoContainer = document.createElement('div');
-        videoContainer.id = 'video-container';
-        videoContainer.innerHTML = `
-            <video id="video-player" controls></video>
-            <button id="close-player">Close Player</button>
-        `;
-        document.body.appendChild(videoContainer);
-        
-        // Close button
-        document.getElementById('close-player').addEventListener('click', this.closeVideoPlayer.bind(this));
+        // Create video player container if it doesn't exist
+        if (!document.getElementById('video-container')) {
+            const videoContainer = document.createElement('div');
+            videoContainer.id = 'video-container';
+            videoContainer.innerHTML = `
+                <video id="video-player" controls></video>
+                <button id="close-player">Close Player</button>
+            `;
+            document.body.appendChild(videoContainer);
+
+            // Close button
+            document.getElementById('close-player').addEventListener('click', this.closeVideoPlayer.bind(this));
+        }
     }
 
     updateApiUrl() {
-        document.getElementById('api-base-url').textContent = this.apiBaseUrl;
+        const apiUrlElement = document.getElementById('api-base-url');
+        if (apiUrlElement) {
+            apiUrlElement.textContent = this.apiBaseUrl;
+        }
     }
 
+    // ========== Portal Methods ==========
+
     async loadPortals() {
+        if (!this.isAuthenticated) return;
+
         try {
-            const response = await fetch(`${this.apiBaseUrl}/api/portals`);
+            const response = await fetch(`${this.apiBaseUrl}/api/portals`, {
+                credentials: 'include'
+            });
             const data = await response.json();
-            
+
             if (data.success) {
                 this.portals = data.data;
                 this.renderPortals();
@@ -96,7 +338,8 @@ class IptvApp {
 
     renderPortals() {
         const container = document.getElementById('portals-list');
-        
+        if (!container) return;
+
         if (this.portals.length === 0) {
             container.innerHTML = '<div class="loading">No portals added yet</div>';
             return;
@@ -130,6 +373,8 @@ class IptvApp {
 
     updatePortalSelect() {
         const select = document.getElementById('channel-portal-select');
+        if (!select) return;
+
         select.innerHTML = '<option value="">-- Select a Portal --</option>' +
             this.portals.filter(p => p.isActive).map(portal => `
                 <option value="${portal.id}">${this.escapeHtml(portal.name)}</option>
@@ -138,7 +383,7 @@ class IptvApp {
 
     async addPortal(e) {
         e.preventDefault();
-        
+
         const form = e.target;
         const name = document.getElementById('portal-name').value;
         const portalUrl = document.getElementById('portal-url').value;
@@ -150,6 +395,7 @@ class IptvApp {
                 headers: {
                     'Content-Type': 'application/json'
                 },
+                credentials: 'include',
                 body: JSON.stringify({ name, portalUrl, macAddress })
             });
 
@@ -171,13 +417,14 @@ class IptvApp {
     async testPortal(portalId) {
         try {
             this.showToast('Testing connection...', 'success');
-            
+
             const response = await fetch(`${this.apiBaseUrl}/api/portals/${portalId}/test`, {
-                method: 'POST'
+                method: 'POST',
+                credentials: 'include'
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 this.showToast(data.message, 'success');
                 await this.loadPortals();
@@ -192,139 +439,15 @@ class IptvApp {
 
     async loadPortalChannels(portalId) {
         // Switch to channels tab
-        document.querySelector('.tab[data-tab="channels"]').click();
-        document.getElementById('channel-portal-select').value = portalId;
-        await this.loadChannels();
-    }
-
-    async loadChannels() {
-        const portalId = document.getElementById('channel-portal-select').value;
-        
-        if (!portalId) {
-            document.getElementById('channels-list').innerHTML = '<div class="loading">Select a portal to view channels</div>';
-            return;
+        const channelsTab = document.querySelector('.tab[data-tab="channels"]');
+        if (channelsTab) {
+            channelsTab.click();
         }
-
-        this.currentPortalId = portalId;
-        
-        try {
-            document.getElementById('channels-list').innerHTML = '<div class="loading">Loading channels...</div>';
-            
-            const response = await fetch(`${this.apiBaseUrl}/api/channels/portal/${portalId}`);
-            const data = await response.json();
-            
-            if (data.success) {
-                this.currentChannels = data.data.channels;
-                this.currentFilteredChannels = this.currentChannels;
-                this.renderChannels();
-                await this.loadCategories(portalId);
-            } else {
-                this.showToast(data.error || 'Failed to load channels', 'error');
-                document.getElementById('channels-list').innerHTML = '<div class="loading">Failed to load channels</div>';
-            }
-        } catch (error) {
-            console.error('Error loading channels:', error);
-            this.showToast('Error loading channels', 'error');
-            document.getElementById('channels-list').innerHTML = '<div class="loading">Error loading channels</div>';
+        const portalSelect = document.getElementById('channel-portal-select');
+        if (portalSelect) {
+            portalSelect.value = portalId;
+            await this.loadChannels();
         }
-    }
-
-    async loadCategories(portalId) {
-        try {
-            const response = await fetch(`${this.apiBaseUrl}/api/channels/portal/${portalId}/categories`);
-            const data = await response.json();
-            
-            if (data.success) {
-                this.currentCategories = ['all', ...data.data];
-                this.renderCategories();
-            }
-        } catch (error) {
-            console.error('Error loading categories:', error);
-        }
-    }
-
-    renderCategories() {
-        const container = document.querySelector('.category-filter');
-        container.innerHTML = this.currentCategories.map(category => `
-            <button class="category-btn ${category === 'all' ? 'active' : ''}" 
-                    data-category="${category}">
-                ${category === 'all' ? 'All' : category}
-            </button>
-        `).join('');
-
-        // Add click events to category buttons
-        container.querySelectorAll('.category-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const category = btn.getAttribute('data-category');
-                this.filterByCategory(category);
-                
-                // Update active state
-                container.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-            });
-        });
-    }
-
-    renderChannels() {
-        const container = document.getElementById('channels-list');
-        
-        if (this.currentFilteredChannels.length === 0) {
-            container.innerHTML = '<div class="loading">No channels found</div>';
-            return;
-        }
-
-        container.innerHTML = this.currentFilteredChannels.map(channel => `
-            <div class="channel-card" onclick="app.playChannel('${channel.id}', '${this.currentPortalId}')">
-                <div class="channel-number">${channel.number}</div>
-                <div class="channel-name" title="${this.escapeHtml(channel.name)}">${this.escapeHtml(channel.name)}</div>
-            </div>
-        `).join('');
-    }
-
-    searchChannels() {
-        const query = document.getElementById('channel-search').value.toLowerCase();
-        
-        this.currentFilteredChannels = this.currentChannels.filter(channel => 
-            channel.name.toLowerCase().includes(query)
-        );
-        
-        this.renderChannels();
-    }
-
-    filterByCategory(category) {
-        if (category === 'all') {
-            this.currentFilteredChannels = this.currentChannels;
-        } else {
-            this.currentFilteredChannels = this.currentChannels.filter(channel => 
-                channel.category === category
-            );
-        }
-        
-        this.renderChannels();
-    }
-
-    playChannel(channelId, portalId) {
-        const streamUrl = `${this.apiBaseUrl}/api/proxy/stream?portalId=${portalId}&channelId=${channelId}`;
-        
-        const player = document.getElementById('video-player');
-        const container = document.getElementById('video-container');
-        
-        player.src = streamUrl;
-        container.style.display = 'block';
-        
-        player.play().catch(e => {
-            this.showToast('Failed to play stream', 'error');
-            console.error('Playback error:', e);
-        });
-    }
-
-    closeVideoPlayer() {
-        const player = document.getElementById('video-player');
-        const container = document.getElementById('video-container');
-        
-        player.pause();
-        player.src = '';
-        container.style.display = 'none';
     }
 
     async deletePortal(portalId) {
@@ -334,7 +457,8 @@ class IptvApp {
 
         try {
             const response = await fetch(`${this.apiBaseUrl}/api/portals/${portalId}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                credentials: 'include'
             });
 
             const data = await response.json();
@@ -351,35 +475,199 @@ class IptvApp {
         }
     }
 
+    // ========== Channel Methods ==========
+
+    async loadChannels() {
+        const portalId = document.getElementById('channel-portal-select').value;
+
+        if (!portalId) {
+            const channelsList = document.getElementById('channels-list');
+            if (channelsList) {
+                channelsList.innerHTML = '<div class="loading">Select a portal to view channels</div>';
+            }
+            return;
+        }
+
+        this.currentPortalId = portalId;
+
+        try {
+            const channelsList = document.getElementById('channels-list');
+            if (channelsList) {
+                channelsList.innerHTML = '<div class="loading">Loading channels...</div>';
+            }
+
+            const response = await fetch(`${this.apiBaseUrl}/api/channels/portal/${portalId}`, {
+                credentials: 'include'
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                this.currentChannels = data.data.channels;
+                this.currentFilteredChannels = this.currentChannels;
+                this.renderChannels();
+                await this.loadCategories(portalId);
+            } else {
+                this.showToast(data.error || 'Failed to load channels', 'error');
+                if (channelsList) {
+                    channelsList.innerHTML = '<div class="loading">Failed to load channels</div>';
+                }
+            }
+        } catch (error) {
+            console.error('Error loading channels:', error);
+            this.showToast('Error loading channels', 'error');
+            const channelsList = document.getElementById('channels-list');
+            if (channelsList) {
+                channelsList.innerHTML = '<div class="loading">Error loading channels</div>';
+            }
+        }
+    }
+
+    async loadCategories(portalId) {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/api/channels/portal/${portalId}/categories`, {
+                credentials: 'include'
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                this.currentCategories = ['all', ...data.data];
+                this.renderCategories();
+            }
+        } catch (error) {
+            console.error('Error loading categories:', error);
+        }
+    }
+
+    renderCategories() {
+        const container = document.querySelector('.category-filter');
+        if (!container) return;
+
+        container.innerHTML = this.currentCategories.map(category => `
+            <button class="category-btn ${category === 'all' ? 'active' : ''}"
+                    data-category="${category}">
+                ${category === 'all' ? 'All' : category}
+            </button>
+        `).join('');
+
+        // Add click events to category buttons
+        container.querySelectorAll('.category-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const category = btn.getAttribute('data-category');
+                this.filterByCategory(category);
+
+                // Update active state
+                container.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+    }
+
+    renderChannels() {
+        const container = document.getElementById('channels-list');
+        if (!container) return;
+
+        if (this.currentFilteredChannels.length === 0) {
+            container.innerHTML = '<div class="loading">No channels found</div>';
+            return;
+        }
+
+        container.innerHTML = this.currentFilteredChannels.map(channel => `
+            <div class="channel-card" onclick="app.playChannel('${channel.id}', '${this.currentPortalId}')">
+                <div class="channel-number">${channel.number}</div>
+                <div class="channel-name" title="${this.escapeHtml(channel.name)}">${this.escapeHtml(channel.name)}</div>
+            </div>
+        `).join('');
+    }
+
+    searchChannels() {
+        const query = document.getElementById('channel-search').value.toLowerCase();
+
+        this.currentFilteredChannels = this.currentChannels.filter(channel =>
+            channel.name.toLowerCase().includes(query)
+        );
+
+        this.renderChannels();
+    }
+
+    filterByCategory(category) {
+        if (category === 'all') {
+            this.currentFilteredChannels = this.currentChannels;
+        } else {
+            this.currentFilteredChannels = this.currentChannels.filter(channel =>
+                channel.category === category
+            );
+        }
+
+        this.renderChannels();
+    }
+
+    // ========== Video Player Methods ==========
+
+    playChannel(channelId, portalId) {
+        const streamUrl = `${this.apiBaseUrl}/api/proxy/stream?portalId=${portalId}&channelId=${channelId}`;
+
+        const player = document.getElementById('video-player');
+        const container = document.getElementById('video-container');
+
+        if (!player || !container) return;
+
+        player.src = streamUrl;
+        container.style.display = 'block';
+
+        player.play().catch(e => {
+            this.showToast('Failed to play stream', 'error');
+            console.error('Playback error:', e);
+        });
+    }
+
+    closeVideoPlayer() {
+        const player = document.getElementById('video-player');
+        const container = document.getElementById('video-container');
+
+        if (!player || !container) return;
+
+        player.pause();
+        player.src = '';
+        container.style.display = 'none';
+    }
+
+    // ========== Utility Methods ==========
+
     showModal(title, content) {
-        document.getElementById('modal-title').textContent = title;
-        document.getElementById('modal-body').innerHTML = content;
-        document.getElementById('portal-modal').style.display = 'block';
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        const modal = document.getElementById('portal-modal');
+
+        if (modalTitle) modalTitle.textContent = title;
+        if (modalBody) modalBody.innerHTML = content;
+        if (modal) modal.style.display = 'block';
     }
 
     closeModal() {
-        document.getElementById('portal-modal').style.display = 'none';
+        const modal = document.getElementById('portal-modal');
+        if (modal) modal.style.display = 'none';
     }
 
     showToast(message, type = 'success') {
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
         toast.textContent = message;
-        
+
         document.body.appendChild(toast);
-        
+
         setTimeout(() => {
             toast.remove();
         }, 3000);
     }
 
     escapeHtml(text) {
+        if (!text) return '';
         const map = {
-            '&': '&',
-            '<': '<',
-            '>': '>',
-            '"': '"',
-            "'": '''
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
         };
         return text.replace(/[&<>"']/g, m => map[m]);
     }

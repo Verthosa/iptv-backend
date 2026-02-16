@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using IptvBackend.Models;
 using IptvBackend.Services;
@@ -6,6 +7,7 @@ namespace IptvBackend.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class PortalsController : ControllerBase
 {
     private readonly PortalStore _portalStore;
