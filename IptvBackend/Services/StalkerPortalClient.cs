@@ -15,13 +15,14 @@ public class StalkerPortalClient
     private readonly ILogger<StalkerPortalClient> _logger;
 
     // Common Stalker portal endpoint paths to try
+    // Prioritize /server/load.php as it's the most common standard endpoint
     private static readonly string[] EndpointPaths = new[]
     {
-        "/portal.php",
-        "/stalker_portal/server/load.php",
         "/server/load.php",
+        "/stalker_portal/server/load.php",
         "/c/server/load.php",
-        "/stalker_portal/c/server/load.php"
+        "/stalker_portal/c/server/load.php",
+        "/portal.php"
     };
 
     public StalkerPortalClient(HttpClient httpClient, ILogger<StalkerPortalClient> logger)
