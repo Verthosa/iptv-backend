@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Web;
 using IptvBackend.Models;
 
 namespace IptvBackend.Services;
@@ -11,19 +10,7 @@ public class StalkerPortalClient
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions;
     private readonly Dictionary<string, PortalSession> _sessions = new();
-    private readonly Dictionary<string, string> _portalEndpoints = new();
     private readonly ILogger<StalkerPortalClient> _logger;
-
-    // Common Stalker portal endpoint paths to try
-    // Prioritize /server/load.php as it's the most common standard endpoint
-    private static readonly string[] EndpointPaths = new[]
-    {
-        "/server/load.php",
-        "/stalker_portal/server/load.php",
-        "/c/server/load.php",
-        "/stalker_portal/c/server/load.php",
-        "/portal.php"
-    };
 
     public StalkerPortalClient(HttpClient httpClient, ILogger<StalkerPortalClient> logger)
     {
@@ -50,28 +37,72 @@ public class StalkerPortalClient
         var mac = macAddress.Replace(":", "").ToUpper();
         using var md5 = MD5.Create();
         var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(mac));
-        return BitConverter.ToString(hash).Replace("-", "").Substring(0, 13).ToUpper();
+        var hexString = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        return hexString.Substring(0, 13).ToUpperInvariant();
     }
 
     private string GenerateDeviceId(string macAddress)
     {
         using var sha256 = SHA256.Create();
         var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(macAddress));
-        return BitConverter.ToString(hash).Replace("-", "").Substring(0, 32).ToUpper();
+        return BitConverter.ToString(hash).Replace("-", "").ToUpperInvariant();
     }
 
     private string GenerateDeviceId2(string macAddress)
     {
         using var sha256 = SHA256.Create();
         var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(macAddress + "device2"));
-        return BitConverter.ToString(hash).Replace("-", "").Substring(0, 32).ToUpper();
+        return BitConverter.ToString(hash).Replace("-", "").ToUpperInvariant();
     }
 
     private string GenerateSignature(string macAddress)
     {
         using var sha256 = SHA256.Create();
         var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(macAddress + "sig"));
-        return BitConverter.ToString(hash).Replace("-", "").Substring(0, 32).ToUpper();
+        return BitConverter.ToString(hash).Replace("-", "").ToUpperInvariant();
+    }
+
+    private string BuildCookieString(string macAddress, string? token = null)
+    {
+        var cookies = new List<string>
+        {
+            $"mac={macAddress}",
+            "stb_lang=en",
+            "timezone=Europe/London"
+        };
+
+        if (!string.IsNullOrEmpty(token))
+        {
+            cookies.Add($"token={token}");
+        }
+
+        return string.Join("; ", cookies);
+    }
+
+    private HttpRequestMessage CreateRequest(string baseUrl, string macAddress, string? token = null)
+    {
+        var baseUri = new Uri(baseUrl.TrimEnd('/'));
+        var request = new HttpRequestMessage();
+
+        request.Headers.TryAddWithoutValidation("Accept", "*/*");
+        request.Headers.TryAddWithoutValidation("User-Agent",
+            "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3");
+        request.Headers.TryAddWithoutValidation("Referer", $"{baseUrl.TrimEnd('/')}/c/index.html");
+        request.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.5");
+        request.Headers.TryAddWithoutValidation("Pragma", "no-cache");
+        request.Headers.TryAddWithoutValidation("X-User-Agent", "Model: MAG250; Link: WiFi");
+        request.Headers.TryAddWithoutValidation("Host", baseUri.Host);
+        request.Headers.TryAddWithoutValidation("Connection", "Close");
+        request.Headers.TryAddWithoutValidation("Accept-Encoding", "gzip, deflate");
+
+        if (!string.IsNullOrEmpty(token))
+        {
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
+        }
+
+        request.Headers.TryAddWithoutValidation("Cookie", BuildCookieString(macAddress, token));
+
+        return request;
     }
 
     private async Task<PortalSession> GetOrCreateSessionAsync(Portal portal)
@@ -96,323 +127,219 @@ public class StalkerPortalClient
         var deviceId2 = GenerateDeviceId2(portal.MacAddress);
         var signature = GenerateSignature(portal.MacAddress);
 
-        // Find the working endpoint for this portal
-        var endpointPath = await DiscoverEndpointAsync(portal);
-        _logger.LogInformation("Using endpoint {Endpoint} for portal {PortalId}", endpointPath, portal.Id);
-
         // Step 1: Handshake to get token
-        var handshakeUrl = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
-        {
-            ["type"] = "stb",
-            ["action"] = "handshake",
-            ["token"] = "",
-            ["JsHttpRequest"] = "1-xml"
-        });
+        var handshakeUrl = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=stb&action=handshake&JsHttpRequest=1-xml";
 
-        var handshakeHeaders = GetHandshakeHeaders(portal.MacAddress);
+        using var handshakeRequest = CreateRequest(portal.PortalUrl, portal.MacAddress);
+        handshakeRequest.Method = HttpMethod.Get;
+        handshakeRequest.RequestUri = new Uri(handshakeUrl);
 
         _logger.LogDebug("Sending handshake request to {Url}", handshakeUrl);
-        var response = await SendRequestAsync(handshakeUrl, handshakeHeaders);
-        _logger.LogDebug("Handshake response: {Response}", response);
+        var response = await _httpClient.SendAsync(handshakeRequest);
+        response.EnsureSuccessStatusCode();
 
-        var handshakeResult = JsonSerializer.Deserialize<StalkerHandshakeResponse>(response, _jsonOptions);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        _logger.LogDebug("Handshake response: {Response}", responseBody);
 
-        if (handshakeResult?.Js?.Token == null)
+        using var doc = JsonDocument.Parse(responseBody);
+        string? token = null;
+
+        if (doc.RootElement.TryGetProperty("js", out var jsElement))
+        {
+            if (jsElement.TryGetProperty("token", out var tokenElement))
+            {
+                token = tokenElement.GetString();
+            }
+        }
+
+        if (string.IsNullOrEmpty(token))
         {
             throw new InvalidOperationException("Failed to get authentication token from handshake");
         }
 
-        var token = handshakeResult.Js.Token;
         _logger.LogInformation("Got token from handshake: {Token}", token[..Math.Min(20, token.Length)] + "...");
 
         // Step 2: Get profile to complete authentication
-        await GetProfileAsync(portal, token, endpointPath);
+        await GetProfileAsync(portal, token);
 
         var expiry = DateTime.UtcNow.AddMinutes(600); // 10 hours
 
         return new PortalSession(token, expiry, serialNumber, deviceId, deviceId2, signature);
     }
 
-    private async Task<string> DiscoverEndpointAsync(Portal portal)
+    private async Task GetProfileAsync(Portal portal, string token)
     {
-        // Check if we already found the endpoint for this portal
-        if (_portalEndpoints.TryGetValue(portal.Id, out var cachedEndpoint))
-        {
-            return cachedEndpoint;
-        }
+        var profileUrl = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=stb&action=get_profile&JsHttpRequest=1-xml";
 
-        // Try each endpoint path
-        var headers = GetHandshakeHeaders(portal.MacAddress);
-        var baseUri = portal.PortalUrl.TrimEnd('/');
-
-        foreach (var path in EndpointPaths)
-        {
-            try
-            {
-                var testUrl = BuildUrl(baseUri, path, new Dictionary<string, string>
-                {
-                    ["type"] = "stb",
-                    ["action"] = "handshake",
-                    ["token"] = "",
-                    ["JsHttpRequest"] = "1-xml"
-                });
-
-                _logger.LogDebug("Trying endpoint {Path} for portal {PortalId}", path, portal.Id);
-                var response = await SendRequestAsync(testUrl, headers);
-
-                // Check if we got a valid handshake response with a token
-                var result = JsonSerializer.Deserialize<StalkerHandshakeResponse>(response, _jsonOptions);
-                if (result?.Js?.Token != null)
-                {
-                    _logger.LogInformation("Found working endpoint {Path} for portal {PortalId}", path, portal.Id);
-                    _portalEndpoints[portal.Id] = path;
-                    return path;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug("Endpoint {Path} failed for portal {PortalId}: {Error}", path, portal.Id, ex.Message);
-                // Continue to try next endpoint
-            }
-        }
-
-        throw new InvalidOperationException($"Could not find a working endpoint for portal {portal.PortalUrl}. Tried: {string.Join(", ", EndpointPaths)}");
-    }
-
-    private Dictionary<string, string> GetHandshakeHeaders(string macAddress)
-    {
-        // The cookie format is critical for Stalker portals
-        var cookie = $"mac={HttpUtility.UrlEncode(macAddress)}; stb_lang=en; timezone=Europe/Amsterdam";
-
-        return new Dictionary<string, string>
-        {
-            ["User-Agent"] = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
-            ["X-User-Agent"] = "Model: MAG250; Link: WiFi",
-            ["Accept"] = "*/*",
-            ["Accept-Language"] = "en-US,en;q=0.9",
-            ["Cookie"] = cookie
-        };
-    }
-
-    private Dictionary<string, string> GetAuthHeaders(string macAddress, string token)
-    {
-        var cookie = $"mac={HttpUtility.UrlEncode(macAddress)}; stb_lang=en; timezone=Europe/Amsterdam";
-
-        return new Dictionary<string, string>
-        {
-            ["User-Agent"] = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
-            ["X-User-Agent"] = "Model: MAG250; Link: WiFi",
-            ["Accept"] = "*/*",
-            ["Accept-Language"] = "en-US,en;q=0.9",
-            ["Cookie"] = cookie,
-            ["Authorization"] = $"Bearer {token}"
-        };
-    }
-
-    private async Task GetProfileAsync(Portal portal, string token, string endpointPath)
-    {
-        // Don't include token in query string - rely on Authorization header only
-        var profileUrl = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
-        {
-            ["type"] = "stb",
-            ["action"] = "get_profile",
-            ["JsHttpRequest"] = "1-xml"
-        });
-
-        var profileHeaders = GetAuthHeaders(portal.MacAddress, token);
+        using var profileRequest = CreateRequest(portal.PortalUrl, portal.MacAddress, token);
+        profileRequest.Method = HttpMethod.Get;
+        profileRequest.RequestUri = new Uri(profileUrl);
 
         _logger.LogDebug("Sending get_profile request to {Url}", profileUrl);
-        var response = await SendRequestAsync(profileUrl, profileHeaders);
-        _logger.LogDebug("Get profile response: {Response}", response[..Math.Min(500, response.Length)]);
-
-        // Check if response contains authorization errors
-        if (response.Contains("Authorization failed", StringComparison.OrdinalIgnoreCase) ||
-            response.Contains("""error""") ||
-            response.Contains("""wrong"""))
-        {
-            throw new InvalidOperationException($"Failed to get profile: {response}");
-        }
-    }
-
-    private async Task<string> SendRequestAsync(string url, Dictionary<string, string>? headers = null)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-
-        if (headers != null)
-        {
-            foreach (var header in headers)
-            {
-                request.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            }
-        }
-
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(profileRequest);
         response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadAsStringAsync();
-    }
+        var responseBody = await response.Content.ReadAsStringAsync();
+        _logger.LogDebug("Get profile response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
 
-    private string BuildUrl(string baseUrl, string endpointPath, Dictionary<string, string> parameters)
-    {
-        var baseUri = baseUrl.TrimEnd('/');
-        var fullUrl = $"{baseUri}{endpointPath}";
-
-        var uriBuilder = new UriBuilder(fullUrl);
-        var query = HttpUtility.ParseQueryString(string.Empty);
-
-        foreach (var param in parameters)
+        if (responseBody.Contains("Authorization failed", StringComparison.OrdinalIgnoreCase) ||
+            responseBody.Contains("Authorization filaed", StringComparison.OrdinalIgnoreCase))
         {
-            query[param.Key] = param.Value;
+            throw new InvalidOperationException($"Authorization failed. Response: {responseBody}");
         }
-
-        uriBuilder.Query = query.ToString();
-        return uriBuilder.ToString();
-    }
-
-    private string GetEndpointForPortal(Portal portal)
-    {
-        if (!_portalEndpoints.TryGetValue(portal.Id, out var endpoint))
-        {
-            // If we don't have a cached endpoint, we need to discover it first
-            throw new InvalidOperationException("Portal endpoint not initialized. Please test the connection first.");
-        }
-        return endpoint;
     }
 
     public async Task<List<Channel>> GetChannelsAsync(Portal portal)
     {
         var session = await GetOrCreateSessionAsync(portal);
-        var endpointPath = GetEndpointForPortal(portal);
 
-        // Don't include token in query string - rely on Authorization header only
-        var url = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
-        {
-            ["type"] = "itv",
-            ["action"] = "get_ordered_list",
-            ["genre"] = "*",
-            ["force_ch_link_check"] = "0",
-            ["fav"] = "0",
-            ["sortby"] = "number",
-            ["p"] = "1",
-            ["JsHttpRequest"] = "1-xml"
-        });
+        var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=itv&action=get_ordered_list&genre=*&force_ch_link_check=0&fav=0&sortby=number&p=1&JsHttpRequest=1-xml";
 
-        var headers = GetAuthHeaders(portal.MacAddress, session.Token);
+        using var request = CreateRequest(portal.PortalUrl, portal.MacAddress, session.Token);
+        request.Method = HttpMethod.Get;
+        request.RequestUri = new Uri(url);
 
         _logger.LogDebug("Getting channels from {Url}", url);
-        var response = await SendRequestAsync(url, headers);
-        _logger.LogDebug("Channels response: {Response}", response[..Math.Min(1000, response.Length)]);
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
 
-        // Try to parse the response - Stalker portals can have different response structures
+        var responseBody = await response.Content.ReadAsStringAsync();
+        _logger.LogDebug("Channels response: {Response}", responseBody[..Math.Min(1000, responseBody.Length)]);
+
+        if (responseBody.Contains("Authorization failed", StringComparison.OrdinalIgnoreCase) ||
+            responseBody.Contains("Authorization filaed", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Authorization failed when fetching channels");
+        }
+
+        var channels = new List<Channel>();
+
+        using var doc = JsonDocument.Parse(responseBody);
+
+        if (!doc.RootElement.TryGetProperty("js", out var jsElement))
+        {
+            _logger.LogWarning("No 'js' property found in response");
+            return channels;
+        }
+
+        // Handle js being false or empty
+        if (jsElement.ValueKind == JsonValueKind.False ||
+            (jsElement.ValueKind == JsonValueKind.Array && jsElement.GetArrayLength() == 0))
+        {
+            return channels;
+        }
+
+        // Get data array from js.data
+        if (jsElement.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in dataElement.EnumerateArray())
+            {
+                var channel = ParseChannel(item);
+                if (channel != null)
+                {
+                    channels.Add(channel);
+                }
+            }
+        }
+
+        _logger.LogInformation("Retrieved {Count} channels from portal {PortalId}", channels.Count, portal.Id);
+        return channels;
+    }
+
+    private Channel? ParseChannel(JsonElement item)
+    {
         try
         {
-            var result = JsonSerializer.Deserialize<StalkerChannelResponse>(response, _jsonOptions);
-
-            if (result?.Js?.Data != null)
+            var channel = new Channel
             {
-                return result.Js.Data.Select(ch => new Channel
-                {
-                    Id = ch.Id.ToString(),
-                    Name = ch.Name,
-                    Number = ch.Number,
-                    Category = ch.CategoryId,
-                    Logo = ch.Logo,
-                    Cmd = ch.Cmd,
-                    Source = "mpegts"
-                }).ToList();
+                Source = "mpegts"
+            };
+
+            if (item.TryGetProperty("id", out var idProp))
+            {
+                channel.Id = idProp.ValueKind == JsonValueKind.Number
+                    ? idProp.GetInt32().ToString()
+                    : idProp.GetString() ?? "";
             }
 
-            // Try alternative parsing if the structure is different
-            var doc = JsonDocument.Parse(response);
-            if (doc.RootElement.TryGetProperty("js", out var jsElement))
+            if (item.TryGetProperty("name", out var nameProp))
             {
-                List<StalkerChannel>? channels = null;
-
-                // Try js.data first
-                if (jsElement.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Array)
-                {
-                    channels = JsonSerializer.Deserialize<List<StalkerChannel>>(dataElement.GetRawText(), _jsonOptions);
-                }
-                // Some portals return js directly as array
-                else if (jsElement.ValueKind == JsonValueKind.Array)
-                {
-                    channels = JsonSerializer.Deserialize<List<StalkerChannel>>(jsElement.GetRawText(), _jsonOptions);
-                }
-
-                if (channels != null)
-                {
-                    return channels.Select(ch => new Channel
-                    {
-                        Id = ch.Id.ToString(),
-                        Name = ch.Name,
-                        Number = ch.Number,
-                        Category = ch.CategoryId,
-                        Logo = ch.Logo,
-                        Cmd = ch.Cmd,
-                        Source = "mpegts"
-                    }).ToList();
-                }
+                channel.Name = nameProp.GetString() ?? "";
             }
 
-            _logger.LogWarning("No channels found in response or invalid response structure");
-            return new List<Channel>();
+            if (item.TryGetProperty("number", out var numberProp))
+            {
+                channel.Number = numberProp.ValueKind == JsonValueKind.Number
+                    ? numberProp.GetInt32()
+                    : 0;
+            }
+
+            if (item.TryGetProperty("category_id", out var categoryProp))
+            {
+                channel.Category = categoryProp.GetString() ?? "";
+            }
+
+            if (item.TryGetProperty("logo", out var logoProp) && logoProp.ValueKind != JsonValueKind.Null)
+            {
+                channel.Logo = logoProp.GetString();
+            }
+
+            if (item.TryGetProperty("cmd", out var cmdProp))
+            {
+                channel.Cmd = cmdProp.GetString() ?? "";
+            }
+
+            return channel;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to parse channels response");
-            throw new InvalidOperationException($"Failed to parse channels: {ex.Message}");
+            _logger.LogWarning(ex, "Failed to parse channel item");
+            return null;
         }
     }
 
     public async Task<List<string>> GetCategoriesAsync(Portal portal)
     {
         var session = await GetOrCreateSessionAsync(portal);
-        var endpointPath = GetEndpointForPortal(portal);
 
-        // Don't include token in query string - rely on Authorization header only
-        var url = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
-        {
-            ["type"] = "itv",
-            ["action"] = "get_genres",
-            ["JsHttpRequest"] = "1-xml"
-        });
+        var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=itv&action=get_genres&JsHttpRequest=1-xml";
 
-        var headers = GetAuthHeaders(portal.MacAddress, session.Token);
+        using var request = CreateRequest(portal.PortalUrl, portal.MacAddress, session.Token);
+        request.Method = HttpMethod.Get;
+        request.RequestUri = new Uri(url);
 
         _logger.LogDebug("Getting categories from {Url}", url);
-        var response = await SendRequestAsync(url, headers);
-        _logger.LogDebug("Categories response: {Response}", response[..Math.Min(500, response.Length)]);
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
 
-        // Parse categories from response - Stalker returns genres in js array
-        try
+        var responseBody = await response.Content.ReadAsStringAsync();
+        _logger.LogDebug("Categories response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
+
+        var categories = new List<string>();
+
+        using var doc = JsonDocument.Parse(responseBody);
+
+        if (doc.RootElement.TryGetProperty("js", out var jsElement) && jsElement.ValueKind == JsonValueKind.Array)
         {
-            var doc = JsonDocument.Parse(response);
-            var categories = new List<string>();
-
-            if (doc.RootElement.TryGetProperty("js", out var jsElement) && jsElement.ValueKind == JsonValueKind.Array)
+            foreach (var item in jsElement.EnumerateArray())
             {
-                foreach (var genre in jsElement.EnumerateArray())
+                if (item.TryGetProperty("title", out var titleElement))
                 {
-                    if (genre.TryGetProperty("title", out var titleElement))
+                    var title = titleElement.GetString();
+                    if (!string.IsNullOrEmpty(title))
                     {
-                        categories.Add(titleElement.GetString() ?? "");
+                        categories.Add(title);
                     }
                 }
             }
+        }
 
-            return categories.Where(c => !string.IsNullOrEmpty(c)).ToList();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to parse categories");
-            return new List<string>();
-        }
+        return categories;
     }
 
     public async Task<string> GetStreamUrlAsync(Portal portal, string channelId)
     {
         var session = await GetOrCreateSessionAsync(portal);
-        var endpointPath = GetEndpointForPortal(portal);
 
         // Find the channel by ID to get the command
         var channels = await GetChannelsAsync(portal);
@@ -423,59 +350,88 @@ public class StalkerPortalClient
             throw new InvalidOperationException($"Channel {channelId} not found");
         }
 
-        // Don't include token in query string - rely on Authorization header only
-        var url = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
+        // Clean the cmd if needed
+        var cmd = channel.Cmd;
+
+        // Handle ffrt http:/// format
+        if (cmd.Contains("ffrt") && cmd.Contains("http:///"))
         {
-            ["type"] = "itv",
-            ["action"] = "create_link",
-            ["cmd"] = channel.Cmd,
-            ["series"] = "",
-            ["forced_storage"] = "undefined",
-            ["disable_ad"] = "0",
-            ["download"] = "0",
-            ["JsHttpRequest"] = "1-xml"
-        });
-
-        var headers = GetAuthHeaders(portal.MacAddress, session.Token);
-
-        _logger.LogDebug("Creating stream link from {Url}", url);
-        var response = await SendRequestAsync(url, headers);
-        _logger.LogDebug("Create link response: {Response}", response);
-
-        var result = JsonSerializer.Deserialize<StalkerLinkResponse>(response, _jsonOptions);
-
-        if (result?.Js?.Url == null)
-        {
-            // Try alternative parsing
-            try
+            var parts = cmd.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2)
             {
-                var doc = JsonDocument.Parse(response);
-                if (doc.RootElement.TryGetProperty("js", out var jsElement))
+                if (Uri.TryCreate(parts[0], UriKind.Absolute, out var uriHost))
                 {
-                    if (jsElement.TryGetProperty("url", out var urlElement))
-                    {
-                        return urlElement.GetString() ?? throw new InvalidOperationException("Stream URL is empty");
-                    }
-                    if (jsElement.TryGetProperty("cmd", out var cmdElement))
-                    {
-                        return cmdElement.GetString() ?? throw new InvalidOperationException("Stream cmd is empty");
-                    }
+                    string path = parts[1].Replace("http:///", "").Replace("http://", "");
+                    cmd = $"{uriHost.Scheme}://{uriHost.Authority}/{path.TrimStart('/')}";
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to parse stream URL from response");
-            }
+        }
+        else if (cmd.StartsWith("ffmpeg ", StringComparison.OrdinalIgnoreCase))
+        {
+            cmd = cmd.Substring(7).Trim();
+        }
 
+        var encodedCmd = Uri.EscapeDataString(cmd);
+        var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=itv&action=create_link&cmd={encodedCmd}&series=&forced_storage=undefined&disable_ad=0&download=0&JsHttpRequest=1-xml";
+
+        using var request = CreateRequest(portal.PortalUrl, portal.MacAddress, session.Token);
+        request.Method = HttpMethod.Get;
+        request.RequestUri = new Uri(url);
+
+        _logger.LogDebug("Creating stream link from {Url}", url);
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var responseBody = await response.Content.ReadAsStringAsync();
+        _logger.LogDebug("Create link response: {Response}", responseBody);
+
+        using var doc = JsonDocument.Parse(responseBody);
+
+        if (!doc.RootElement.TryGetProperty("js", out var jsElement))
+        {
+            throw new InvalidOperationException("No 'js' property in create_link response");
+        }
+
+        string? streamUrl = null;
+
+        // Try to get URL from js.cmd or js.url
+        if (jsElement.TryGetProperty("cmd", out var cmdElement))
+        {
+            streamUrl = cmdElement.GetString();
+        }
+        else if (jsElement.TryGetProperty("url", out var urlElement))
+        {
+            streamUrl = urlElement.GetString();
+        }
+
+        if (string.IsNullOrEmpty(streamUrl))
+        {
             throw new InvalidOperationException("Failed to get stream URL from response");
         }
 
-        return result.Js.Url;
+        // Clean the stream URL
+        // Remove ffmpeg prefix
+        if (streamUrl.StartsWith("ffmpeg ", StringComparison.OrdinalIgnoreCase))
+        {
+            streamUrl = streamUrl.Substring(7).Trim();
+        }
+
+        // Fix localhost URLs
+        if (streamUrl.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase) ||
+            streamUrl.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase))
+        {
+            if (Uri.TryCreate(streamUrl, UriKind.Absolute, out var localUri))
+            {
+                var baseUri = new Uri(portal.PortalUrl.TrimEnd('/'));
+                streamUrl = $"{baseUri.Scheme}://{baseUri.Host}/{localUri.PathAndQuery.TrimStart('/')}";
+            }
+        }
+
+        return streamUrl;
     }
 
     public void ClearSession(string portalId)
     {
         _sessions.Remove(portalId);
-        _portalEndpoints.Remove(portalId);
     }
 }
