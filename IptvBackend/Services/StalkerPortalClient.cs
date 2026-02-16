@@ -193,6 +193,9 @@ public class StalkerPortalClient
     {
         var session = await GetOrCreateSessionAsync(portal);
 
+        // Get category mapping first
+        var categoryMap = await GetCategoryMapAsync(portal);
+
         var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=itv&action=get_ordered_list&genre=*&force_ch_link_check=0&fav=0&sortby=number&p=1&JsHttpRequest=1-xml";
 
         using var request = CreateRequest(portal.PortalUrl, portal.MacAddress, session.Token);
@@ -234,7 +237,7 @@ public class StalkerPortalClient
         {
             foreach (var item in dataElement.EnumerateArray())
             {
-                var channel = ParseChannel(item);
+                var channel = ParseChannel(item, categoryMap);
                 if (channel != null)
                 {
                     channels.Add(channel);
@@ -246,7 +249,7 @@ public class StalkerPortalClient
         return channels;
     }
 
-    private Channel? ParseChannel(JsonElement item)
+    private Channel? ParseChannel(JsonElement item, Dictionary<string, string> categoryMap)
     {
         try
         {
@@ -276,7 +279,16 @@ public class StalkerPortalClient
 
             if (item.TryGetProperty("category_id", out var categoryProp))
             {
-                channel.Category = categoryProp.GetString() ?? "";
+                var categoryId = categoryProp.GetString() ?? "";
+                // Map category_id to category title
+                if (!string.IsNullOrEmpty(categoryId) && categoryMap.TryGetValue(categoryId, out var categoryTitle))
+                {
+                    channel.Category = categoryTitle;
+                }
+                else
+                {
+                    channel.Category = categoryId;
+                }
             }
 
             if (item.TryGetProperty("logo", out var logoProp) && logoProp.ValueKind != JsonValueKind.Null)
@@ -300,23 +312,38 @@ public class StalkerPortalClient
 
     public async Task<List<string>> GetCategoriesAsync(Portal portal)
     {
-        var session = await GetOrCreateSessionAsync(portal);
-        var categories = new List<string>();
-
-        // Fetch all three category types
-        var itvCategories = await GetItvGenresAsync(portal, session.Token);
-        var vodCategories = await GetVodCategoriesAsync(portal, session.Token);
-        var seriesCategories = await GetSeriesCategoriesAsync(portal, session.Token);
-
-        categories.AddRange(itvCategories);
-        categories.AddRange(vodCategories);
-        categories.AddRange(seriesCategories);
-
-        // Remove duplicates and return
-        return categories.Distinct().ToList();
+        var categoryMap = await GetCategoryMapAsync(portal);
+        return categoryMap.Values.Distinct().OrderBy(c => c).ToList();
     }
 
-    private async Task<List<string>> GetItvGenresAsync(Portal portal, string token)
+    public async Task<Dictionary<string, string>> GetCategoryMapAsync(Portal portal)
+    {
+        var session = await GetOrCreateSessionAsync(portal);
+        var categoryMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // Fetch all three category types
+        var itvCategories = await GetItvGenresMapAsync(portal, session.Token);
+        foreach (var kvp in itvCategories)
+        {
+            categoryMap[kvp.Key] = kvp.Value;
+        }
+
+        var vodCategories = await GetVodCategoriesMapAsync(portal, session.Token);
+        foreach (var kvp in vodCategories)
+        {
+            categoryMap[kvp.Key] = kvp.Value;
+        }
+
+        var seriesCategories = await GetSeriesCategoriesMapAsync(portal, session.Token);
+        foreach (var kvp in seriesCategories)
+        {
+            categoryMap[kvp.Key] = kvp.Value;
+        }
+
+        return categoryMap;
+    }
+
+    private async Task<Dictionary<string, string>> GetItvGenresMapAsync(Portal portal, string token)
     {
         var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=itv&action=get_genres&JsHttpRequest=1-xml";
 
@@ -331,7 +358,7 @@ public class StalkerPortalClient
         var responseBody = await response.Content.ReadAsStringAsync();
         _logger.LogDebug("ITv genres response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
 
-        var categories = new List<string>();
+        var categories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         using var doc = JsonDocument.Parse(responseBody);
 
@@ -339,13 +366,22 @@ public class StalkerPortalClient
         {
             foreach (var item in jsElement.EnumerateArray())
             {
+                string? id = null;
+                string? title = null;
+
+                if (item.TryGetProperty("id", out var idElement))
+                {
+                    id = idElement.GetString();
+                }
+
                 if (item.TryGetProperty("title", out var titleElement))
                 {
-                    var title = titleElement.GetString();
-                    if (!string.IsNullOrEmpty(title))
-                    {
-                        categories.Add(title);
-                    }
+                    title = titleElement.GetString();
+                }
+
+                if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(title))
+                {
+                    categories[id] = title;
                 }
             }
         }
@@ -353,7 +389,7 @@ public class StalkerPortalClient
         return categories;
     }
 
-    private async Task<List<string>> GetVodCategoriesAsync(Portal portal, string token)
+    private async Task<Dictionary<string, string>> GetVodCategoriesMapAsync(Portal portal, string token)
     {
         var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=vod&action=get_categories&JsHttpRequest=1-xml";
 
@@ -368,7 +404,7 @@ public class StalkerPortalClient
         var responseBody = await response.Content.ReadAsStringAsync();
         _logger.LogDebug("VOD categories response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
 
-        var categories = new List<string>();
+        var categories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         using var doc = JsonDocument.Parse(responseBody);
 
@@ -376,13 +412,22 @@ public class StalkerPortalClient
         {
             foreach (var item in jsElement.EnumerateArray())
             {
+                string? id = null;
+                string? title = null;
+
+                if (item.TryGetProperty("id", out var idElement))
+                {
+                    id = idElement.GetString();
+                }
+
                 if (item.TryGetProperty("title", out var titleElement))
                 {
-                    var title = titleElement.GetString();
-                    if (!string.IsNullOrEmpty(title))
-                    {
-                        categories.Add(title);
-                    }
+                    title = titleElement.GetString();
+                }
+
+                if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(title))
+                {
+                    categories[id] = title;
                 }
             }
         }
@@ -390,7 +435,7 @@ public class StalkerPortalClient
         return categories;
     }
 
-    private async Task<List<string>> GetSeriesCategoriesAsync(Portal portal, string token)
+    private async Task<Dictionary<string, string>> GetSeriesCategoriesMapAsync(Portal portal, string token)
     {
         var url = $"{portal.PortalUrl.TrimEnd('/')}/server/load.php?type=series&action=get_categories&JsHttpRequest=1-xml";
 
@@ -405,7 +450,7 @@ public class StalkerPortalClient
         var responseBody = await response.Content.ReadAsStringAsync();
         _logger.LogDebug("Series categories response: {Response}", responseBody[..Math.Min(500, responseBody.Length)]);
 
-        var categories = new List<string>();
+        var categories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         using var doc = JsonDocument.Parse(responseBody);
 
@@ -416,13 +461,22 @@ public class StalkerPortalClient
             {
                 foreach (var item in jsElement.EnumerateArray())
                 {
+                    string? id = null;
+                    string? title = null;
+
+                    if (item.TryGetProperty("id", out var idElement))
+                    {
+                        id = idElement.GetString();
+                    }
+
                     if (item.TryGetProperty("title", out var titleElement))
                     {
-                        var title = titleElement.GetString();
-                        if (!string.IsNullOrEmpty(title))
-                        {
-                            categories.Add(title);
-                        }
+                        title = titleElement.GetString();
+                    }
+
+                    if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(title))
+                    {
+                        categories[id] = title;
                     }
                 }
             }
@@ -441,7 +495,8 @@ public class StalkerPortalClient
 
         // Find the channel by ID to get the command
         var channels = await GetChannelsAsync(portal);
-        var channel = channels.FirstOrDefault(c => c.Id == channelId);
+        var channel = channels.FirstOrDefault(c =>
+            c.Id.Equals(channelId, StringComparison.OrdinalIgnoreCase));
 
         if (channel == null)
         {
@@ -483,6 +538,13 @@ public class StalkerPortalClient
         var responseBody = await response.Content.ReadAsStringAsync();
         _logger.LogDebug("Create link response: {Response}", responseBody);
 
+        // Check for authorization errors
+        if (responseBody.Contains("Authorization failed", StringComparison.OrdinalIgnoreCase) ||
+            responseBody.Contains("Authorization filaed", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Authorization failed when creating stream link");
+        }
+
         using var doc = JsonDocument.Parse(responseBody);
 
         if (!doc.RootElement.TryGetProperty("js", out var jsElement))
@@ -490,21 +552,30 @@ public class StalkerPortalClient
             throw new InvalidOperationException("No 'js' property in create_link response");
         }
 
+        // Handle js being false or null
+        if (jsElement.ValueKind == JsonValueKind.False || jsElement.ValueKind == JsonValueKind.Null)
+        {
+            throw new InvalidOperationException("Invalid 'js' value in create_link response");
+        }
+
         string? streamUrl = null;
 
-        // Try to get URL from js.cmd or js.url
-        if (jsElement.TryGetProperty("cmd", out var cmdElement))
+        // Try to get URL from js.cmd first, then js.url
+        if (jsElement.TryGetProperty("cmd", out var cmdElement) && cmdElement.ValueKind != JsonValueKind.Null)
         {
             streamUrl = cmdElement.GetString();
+            _logger.LogDebug("Found stream URL in js.cmd: {Url}", streamUrl);
         }
-        else if (jsElement.TryGetProperty("url", out var urlElement))
+
+        if (string.IsNullOrEmpty(streamUrl) && jsElement.TryGetProperty("url", out var urlElement) && urlElement.ValueKind != JsonValueKind.Null)
         {
             streamUrl = urlElement.GetString();
+            _logger.LogDebug("Found stream URL in js.url: {Url}", streamUrl);
         }
 
         if (string.IsNullOrEmpty(streamUrl))
         {
-            throw new InvalidOperationException("Failed to get stream URL from response");
+            throw new InvalidOperationException("Failed to get stream URL from response - no cmd or url property found");
         }
 
         // Clean the stream URL
@@ -524,6 +595,14 @@ public class StalkerPortalClient
                 streamUrl = $"{baseUri.Scheme}://{baseUri.Host}/{localUri.PathAndQuery.TrimStart('/')}";
             }
         }
+
+        // Validate URL
+        if (!Uri.TryCreate(streamUrl, UriKind.Absolute, out _))
+        {
+            throw new InvalidOperationException($"Invalid stream URL: {streamUrl}");
+        }
+
+        _logger.LogInformation("Stream URL created for channel {ChannelId}: {Url}", channelId, streamUrl);
 
         return streamUrl;
     }
