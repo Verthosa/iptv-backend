@@ -48,6 +48,100 @@ header h1 {
     font-size: 1.1rem;
 }
 
+/* Auth Section in Header */
+.auth-section {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border);
+}
+
+.user-info {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.user-info span {
+    color: var(--text-muted);
+}
+
+.user-info strong {
+    color: var(--primary);
+}
+
+/* Auth Container */
+.auth-container {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 400px;
+    padding: 20px;
+}
+
+.auth-box {
+    background: var(--bg-card);
+    border-radius: 10px;
+    padding: 30px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.auth-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 25px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+}
+
+.auth-tab {
+    flex: 1;
+    padding: 10px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1rem;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: all 0.2s;
+}
+
+.auth-tab:hover {
+    background: var(--bg);
+    color: var(--text);
+}
+
+.auth-tab.active {
+    background: var(--primary);
+    color: white;
+}
+
+.auth-form-container {
+    display: none;
+}
+
+.auth-form-container.active {
+    display: block;
+}
+
+.auth-form-container h2 {
+    margin-bottom: 20px;
+    text-align: center;
+    font-size: 1.5rem;
+}
+
+/* Main Content */
+.main-content {
+    display: block;
+}
+
+.main-content.hidden {
+    display: none;
+}
+
 /* Tabs */
 .tabs {
     display: flex;
@@ -134,6 +228,10 @@ input:focus, select:focus {
     transition: all 0.2s;
 }
 
+.btn-full {
+    width: 100%;
+}
+
 .btn-primary {
     background: var(--primary);
     color: white;
@@ -150,6 +248,11 @@ input:focus, select:focus {
 
 .btn-danger {
     background: var(--danger);
+    color: white;
+}
+
+.btn-secondary {
+    background: var(--secondary);
     color: white;
 }
 
@@ -425,6 +528,10 @@ input:focus, select:focus {
         padding: 10px;
     }
     
+    .auth-box {
+        padding: 20px;
+    }
+    
     .portals-grid {
         grid-template-columns: 1fr;
     }
@@ -435,5 +542,10 @@ input:focus, select:focus {
     
     header h1 {
         font-size: 1.8rem;
+    }
+    
+    .user-info {
+        flex-direction: column;
+        gap: 10px;
     }
 }

@@ -11,96 +11,163 @@
         <header>
             <h1>📺 IPTV Backend</h1>
             <p class="subtitle">Stalker Portal Manager</p>
+            <div id="auth-section" class="auth-section">
+                <!-- Auth UI will be injected here -->
+            </div>
         </header>
 
-        <nav class="tabs">
-            <button class="tab active" data-tab="portals">Portals</button>
-            <button class="tab" data-tab="channels">Channels</button>
-            <button class="tab" data-tab="settings">Settings</button>
-        </nav>
+        <!-- Auth Container - Shown when not logged in -->
+        <div id="auth-container" class="auth-container">
+            <div class="auth-box">
+                <div class="auth-tabs">
+                    <button class="auth-tab active" data-auth-tab="login">Login</button>
+                    <button class="auth-tab" data-auth-tab="register">Register</button>
+                </div>
 
-        <!-- Portals Tab -->
-        <section id="portals-tab" class="tab-content active">
-            <div class="card">
-                <h2>Add New Portal</h2>
-                <form id="add-portal-form">
-                    <div class="form-group">
-                        <label for="portal-name">Name</label>
-                        <input type="text" id="portal-name" placeholder="My IPTV Provider" required>
+                <!-- Login Form -->
+                <div id="login-form-container" class="auth-form-container active">
+                    <h2>Welcome Back</h2>
+                    <form id="login-form">
+                        <div class="form-group">
+                            <label for="login-username">Username</label>
+                            <input type="text" id="login-username" placeholder="Enter your username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password">Password</label>
+                            <input type="password" id="login-password" placeholder="Enter your password" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-full">Login</button>
+                    </form>
+                </div>
+
+                <!-- Register Form -->
+                <div id="register-form-container" class="auth-form-container">
+                    <h2>Create Account</h2>
+                    <form id="register-form">
+                        <div class="form-group">
+                            <label for="register-username">Username</label>
+                            <input type="text" id="register-username" placeholder="Choose a username" required minlength="3">
+                        </div>
+                        <div class="form-group">
+                            <label for="register-email">Email</label>
+                            <input type="email" id="register-email" placeholder="Enter your email" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-password">Password</label>
+                            <input type="password" id="register-password" placeholder="Choose a password (min 6 chars)" required minlength="6">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-full">Register</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main App Content - Shown when logged in -->
+        <div id="main-content" class="main-content hidden">
+            <nav class="tabs">
+                <button class="tab active" data-tab="portals">Portals</button>
+                <button class="tab" data-tab="channels">Channels</button>
+                <button class="tab" data-tab="settings">Settings</button>
+            </nav>
+
+            <!-- Portals Tab -->
+            <section id="portals-tab" class="tab-content active">
+                <div class="card">
+                    <h2>Add New Portal</h2>
+                    <form id="add-portal-form">
+                        <div class="form-group">
+                            <label for="portal-name">Name</label>
+                            <input type="text" id="portal-name" placeholder="My IPTV Provider" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="portal-url">Portal URL</label>
+                            <input type="url" id="portal-url" placeholder="http://portal.example.com:8080" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="portal-mac">MAC Address</label>
+                            <input type="text" id="portal-mac" placeholder="00:1A:79:XX:XX:XX" required pattern="^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Add Portal</button>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <h2>Your Portals</h2>
+                    <div id="portals-list" class="portals-grid">
+                        <div class="loading">Loading portals...</div>
                     </div>
-                    <div class="form-group">
-                        <label for="portal-url">Portal URL</label>
-                        <input type="url" id="portal-url" placeholder="http://portal.example.com:8080" required>
+                </div>
+            </section>
+
+            <!-- Channels Tab -->
+            <section id="channels-tab" class="tab-content">
+                <div class="card">
+                    <h2>Select Portal</h2>
+                    <select id="channel-portal-select" class="form-select">
+                        <option value="">-- Select a Portal --</option>
+                    </select>
+                </div>
+
+                <div class="card">
+                    <h2>Channels</h2>
+                    <div class="search-box">
+                        <input type="text" id="channel-search" placeholder="Search channels...">
                     </div>
-                    <div class="form-group">
-                        <label for="portal-mac">MAC Address</label>
-                        <input type="text" id="portal-mac" placeholder="00:1A:79:XX:XX:XX" required pattern="^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$">
+                    <div class="category-filter">
+                        <button class="category-btn active" data-category="all">All</button>
                     </div>
-                    <button type="submit" class="btn btn-primary">Add Portal</button>
-                </form>
-            </div>
-
-            <div class="card">
-                <h2>Your Portals</h2>
-                <div id="portals-list" class="portals-grid">
-                    <div class="loading">Loading portals...</div>
+                    <div id="channels-list" class="channels-grid">
+                        <div class="loading">Select a portal to view channels</div>
+                    </div>
                 </div>
-            </div>
-        </section>
+            </section>
 
-        <!-- Channels Tab -->
-        <section id="channels-tab" class="tab-content">
-            <div class="card">
-                <h2>Select Portal</h2>
-                <select id="channel-portal-select" class="form-select">
-                    <option value="">-- Select a Portal --</option>
-                </select>
-            </div>
+            <!-- Settings Tab -->
+            <section id="settings-tab" class="tab-content">
+                <div class="card">
+                    <h2>API Information</h2>
+                    <div class="info-box">
+                        <p><strong>Base URL:</strong> <span id="api-base-url"></span></p>
+                        <p><strong>Proxy Endpoint:</strong> <code>/api/proxy/stream?portalId=xxx&channelId=xxx</code></p>
+                    </div>
+                </div>
 
-            <div class="card">
-                <h2>Channels</h2>
-                <div class="search-box">
-                    <input type="text" id="channel-search" placeholder="Search channels...">
+                <div class="card">
+                    <h2>How to Use</h2>
+                    <div class="info-box">
+                        <ol>
+                            <li>Add your Stalker portal credentials (URL and MAC address)</li>
+                            <li>Click "Test" to verify the connection</li>
+                            <li>Go to Channels tab to browse available channels</li>
+                            <li>Click any channel to start streaming</li>
+                            <li>Streams are automatically proxied to avoid CORS issues</li>
+                        </ol>
+                    </div>
                 </div>
-                <div class="category-filter">
-                    <button class="category-btn active" data-category="all">All</button>
-                </div>
-                <div id="channels-list" class="channels-grid">
-                    <div class="loading">Select a portal to view channels</div>
-                </div>
-            </div>
-        </section>
 
-        <!-- Settings Tab -->
-        <section id="settings-tab" class="tab-content">
-            <div class="card">
-                <h2>API Information</h2>
-                <div class="info-box">
-                    <p><strong>Base URL:</strong> <span id="api-base-url"></span></p>
-                    <p><strong>Proxy Endpoint:</strong> <code>/api/proxy/stream?portalId=xxx&channelId=xxx</code></p>
+                <div class="card">
+                    <h2>Change Password</h2>
+                    <form id="change-password-form">
+                        <div class="form-group">
+                            <label for="current-password">Current Password</label>
+                            <input type="password" id="current-password" placeholder="Enter current password" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="new-password">New Password</label>
+                            <input type="password" id="new-password" placeholder="Enter new password (min 6 chars)" required minlength="6">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Change Password</button>
+                    </form>
                 </div>
-            </div>
+            </section>
 
-            <div class="card">
-                <h2>How to Use</h2>
-                <div class="info-box">
-                    <ol>
-                        <li>Add your Stalker portal credentials (URL and MAC address)</li>
-                        <li>Click "Test" to verify the connection</li>
-                        <li>Go to Channels tab to browse available channels</li>
-                        <li>Click any channel to start streaming</li>
-                        <li>Streams are automatically proxied to avoid CORS issues</li>
-                    </ol>
+            <!-- Add Portal Modal -->
+            <div id="portal-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close">&times;</span>
+                    <h2 id="modal-title">Portal Details</h2>
+                    <div id="modal-body"></div>
                 </div>
-            </div>
-        </section>
-
-        <!-- Add Portal Modal -->
-        <div id="portal-modal" class="modal">
-            <div class="modal-content">
-                <span class="close">&times;</span>
-                <h2 id="modal-title">Portal Details</h2>
-                <div id="modal-body"></div>
             </div>
         </div>
     </div>

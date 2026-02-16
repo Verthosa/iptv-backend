@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using IptvBackend.Models;
 using IptvBackend.Services;
@@ -6,6 +7,7 @@ namespace IptvBackend.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class ChannelsController : ControllerBase
 {
     private readonly PortalStore _portalStore;
@@ -18,7 +20,7 @@ public class ChannelsController : ControllerBase
     }
 
     [HttpGet("portal/{portalId}")]
-    public async Task<ActionResult<ApiResponse<ChannelResponse>>> GetChannels(string portalId, [FromQuery] string? category = null)
+    public async Task<ActionResult<ApiResponse<ChannelResponse>>> GetChannels(string portalId, [FromQuery] string? categoryId = null)
     {
         try
         {
@@ -33,11 +35,11 @@ public class ChannelsController : ControllerBase
             }
 
             var allChannels = await _stalkerClient.GetChannelsAsync(portal);
-            
-            // Filter by category if specified
-            var filteredChannels = string.IsNullOrWhiteSpace(category) 
-                ? allChannels 
-                : allChannels.Where(c => c.Category.Equals(category, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            // Filter by category ID if specified
+            var filteredChannels = string.IsNullOrWhiteSpace(categoryId)
+                ? allChannels
+                : allChannels.Where(c => c.CategoryId.Equals(categoryId, StringComparison.OrdinalIgnoreCase)).ToList();
 
             var response = new ChannelResponse
             {
@@ -62,37 +64,37 @@ public class ChannelsController : ControllerBase
     }
 
     [HttpGet("portal/{portalId}/categories")]
-    public async Task<ActionResult<ApiResponse<List<string>>>> GetCategories(string portalId)
+    public async Task<ActionResult<ApiResponse<CategoriesResponse>>> GetCategories(string portalId)
     {
         try
         {
             var portal = await _portalStore.GetByIdAsync(portalId);
             if (portal == null)
             {
-                return NotFound(new ApiResponse<List<string>>
+                return NotFound(new ApiResponse<CategoriesResponse>
                 {
                     Success = false,
                     Error = "Portal not found"
                 });
             }
 
-            var channels = await _stalkerClient.GetChannelsAsync(portal);
-            var categories = channels
-                .Select(c => c.Category)
-                .Distinct()
-                .OrderBy(c => c)
-                .ToList();
+            var categories = await _stalkerClient.GetCategoriesAsync(portal);
 
-            return Ok(new ApiResponse<List<string>>
+            var response = new CategoriesResponse
+            {
+                Categories = categories.OrderBy(c => c.Title).ToList()
+            };
+
+            return Ok(new ApiResponse<CategoriesResponse>
             {
                 Success = true,
-                Data = categories,
+                Data = response,
                 Message = $"Found {categories.Count} categories"
             });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new ApiResponse<List<string>>
+            return StatusCode(500, new ApiResponse<CategoriesResponse>
             {
                 Success = false,
                 Error = ex.Message
