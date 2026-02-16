@@ -51,5 +51,4 @@ public class StreamProxyService
             throw new InvalidOperationException($"Failed to connect to HLS stream: {ex.Message}");
         }
     }
-
 }
