@@ -61,11 +61,8 @@ public class ProxyController : ControllerBase
             // Set response headers for streaming
             Response.ContentType = contentType;
             Response.StatusCode = 200;
-            
-            // Add CORS headers
-            Response.Headers.Add("Access-Control-Allow-Origin", "*");
-            Response.Headers.Add("Access-Control-Allow-Methods", "GET, OPTIONS");
-            Response.Headers.Add("Access-Control-Allow-Headers", "Range, Content-Type");
+
+            // Cache headers for live content (CORS handled by middleware)
             Response.Headers.Add("Cache-Control", "no-cache, no-store, must-revalidate");
             Response.Headers.Add("Pragma", "no-cache");
             Response.Headers.Add("Expires", "0");
@@ -120,9 +117,8 @@ public class ProxyController : ControllerBase
 
             Response.ContentType = contentType;
             Response.StatusCode = 200;
-            
-            // CORS headers
-            Response.Headers.Add("Access-Control-Allow-Origin", "*");
+
+            // Cache headers (CORS handled by middleware)
             Response.Headers.Add("Cache-Control", "no-cache");
 
             await StreamThroughProxy(decodedUrl, Response.Body, cancellationToken);
