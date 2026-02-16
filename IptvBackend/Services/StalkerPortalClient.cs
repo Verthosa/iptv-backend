@@ -11,7 +11,18 @@ public class StalkerPortalClient
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions;
     private readonly Dictionary<string, PortalSession> _sessions = new();
+    private readonly Dictionary<string, string> _portalEndpoints = new();
     private readonly ILogger<StalkerPortalClient> _logger;
+
+    // Common Stalker portal endpoint paths to try
+    private static readonly string[] EndpointPaths = new[]
+    {
+        "/portal.php",
+        "/stalker_portal/server/load.php",
+        "/server/load.php",
+        "/c/server/load.php",
+        "/stalker_portal/c/server/load.php"
+    };
 
     public StalkerPortalClient(HttpClient httpClient, ILogger<StalkerPortalClient> logger)
     {
@@ -84,8 +95,12 @@ public class StalkerPortalClient
         var deviceId2 = GenerateDeviceId2(portal.MacAddress);
         var signature = GenerateSignature(portal.MacAddress);
 
+        // Find the working endpoint for this portal
+        var endpointPath = await DiscoverEndpointAsync(portal);
+        _logger.LogInformation("Using endpoint {Endpoint} for portal {PortalId}", endpointPath, portal.Id);
+
         // Step 1: Handshake to get token
-        var handshakeUrl = BuildUrl(portal.PortalUrl, new Dictionary<string, string>
+        var handshakeUrl = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
         {
             ["type"] = "stb",
             ["action"] = "handshake",
@@ -110,11 +125,57 @@ public class StalkerPortalClient
         _logger.LogInformation("Got token from handshake: {Token}", token[..Math.Min(20, token.Length)] + "...");
 
         // Step 2: Get profile to complete authentication
-        await GetProfileAsync(portal, token);
+        await GetProfileAsync(portal, token, endpointPath);
 
         var expiry = DateTime.UtcNow.AddMinutes(600); // 10 hours
 
         return new PortalSession(token, expiry, serialNumber, deviceId, deviceId2, signature);
+    }
+
+    private async Task<string> DiscoverEndpointAsync(Portal portal)
+    {
+        // Check if we already found the endpoint for this portal
+        if (_portalEndpoints.TryGetValue(portal.Id, out var cachedEndpoint))
+        {
+            return cachedEndpoint;
+        }
+
+        // Try each endpoint path
+        var headers = GetHandshakeHeaders(portal.MacAddress);
+        var baseUri = portal.PortalUrl.TrimEnd('/');
+
+        foreach (var path in EndpointPaths)
+        {
+            try
+            {
+                var testUrl = BuildUrl(baseUri, path, new Dictionary<string, string>
+                {
+                    ["type"] = "stb",
+                    ["action"] = "handshake",
+                    ["token"] = "",
+                    ["JsHttpRequest"] = "1-xml"
+                });
+
+                _logger.LogDebug("Trying endpoint {Path} for portal {PortalId}", path, portal.Id);
+                var response = await SendRequestAsync(testUrl, headers);
+
+                // Check if we got a valid handshake response with a token
+                var result = JsonSerializer.Deserialize<StalkerHandshakeResponse>(response, _jsonOptions);
+                if (result?.Js?.Token != null)
+                {
+                    _logger.LogInformation("Found working endpoint {Path} for portal {PortalId}", path, portal.Id);
+                    _portalEndpoints[portal.Id] = path;
+                    return path;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Endpoint {Path} failed for portal {PortalId}: {Error}", path, portal.Id, ex.Message);
+                // Continue to try next endpoint
+            }
+        }
+
+        throw new InvalidOperationException($"Could not find a working endpoint for portal {portal.PortalUrl}. Tried: {string.Join(", ", EndpointPaths)}");
     }
 
     private Dictionary<string, string> GetHandshakeHeaders(string macAddress)
@@ -147,10 +208,10 @@ public class StalkerPortalClient
         };
     }
 
-    private async Task GetProfileAsync(Portal portal, string token)
+    private async Task GetProfileAsync(Portal portal, string token, string endpointPath)
     {
         // Include token in query string as some portals require it
-        var profileUrl = BuildUrl(portal.PortalUrl, new Dictionary<string, string>
+        var profileUrl = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
         {
             ["type"] = "stb",
             ["action"] = "get_profile",
@@ -189,15 +250,12 @@ public class StalkerPortalClient
         return await response.Content.ReadAsStringAsync();
     }
 
-    private string BuildUrl(string baseUrl, Dictionary<string, string> parameters)
+    private string BuildUrl(string baseUrl, string endpointPath, Dictionary<string, string> parameters)
     {
         var baseUri = baseUrl.TrimEnd('/');
+        var fullUrl = $"{baseUri}{endpointPath}";
 
-        // Some portals use /portal.php, others use /stalker_portal/server/api/ or different paths
-        // Try the standard path first
-        var portalPhpUrl = $"{baseUri}/portal.php";
-
-        var uriBuilder = new UriBuilder(portalPhpUrl);
+        var uriBuilder = new UriBuilder(fullUrl);
         var query = HttpUtility.ParseQueryString(string.Empty);
 
         foreach (var param in parameters)
@@ -209,12 +267,23 @@ public class StalkerPortalClient
         return uriBuilder.ToString();
     }
 
+    private string GetEndpointForPortal(Portal portal)
+    {
+        if (!_portalEndpoints.TryGetValue(portal.Id, out var endpoint))
+        {
+            // If we don't have a cached endpoint, we need to discover it first
+            throw new InvalidOperationException("Portal endpoint not initialized. Please test the connection first.");
+        }
+        return endpoint;
+    }
+
     public async Task<List<Channel>> GetChannelsAsync(Portal portal)
     {
         var session = await GetOrCreateSessionAsync(portal);
+        var endpointPath = GetEndpointForPortal(portal);
 
         // Include token in query string as some portals require it
-        var url = BuildUrl(portal.PortalUrl, new Dictionary<string, string>
+        var url = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
         {
             ["type"] = "itv",
             ["action"] = "get_ordered_list",
@@ -297,9 +366,10 @@ public class StalkerPortalClient
     public async Task<List<string>> GetCategoriesAsync(Portal portal)
     {
         var session = await GetOrCreateSessionAsync(portal);
+        var endpointPath = GetEndpointForPortal(portal);
 
         // Include token in query string as some portals require it
-        var url = BuildUrl(portal.PortalUrl, new Dictionary<string, string>
+        var url = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
         {
             ["type"] = "itv",
             ["action"] = "get_genres",
@@ -342,6 +412,7 @@ public class StalkerPortalClient
     public async Task<string> GetStreamUrlAsync(Portal portal, string channelId)
     {
         var session = await GetOrCreateSessionAsync(portal);
+        var endpointPath = GetEndpointForPortal(portal);
 
         // Find the channel by ID to get the command
         var channels = await GetChannelsAsync(portal);
@@ -353,7 +424,7 @@ public class StalkerPortalClient
         }
 
         // Include token in query string as some portals require it
-        var url = BuildUrl(portal.PortalUrl, new Dictionary<string, string>
+        var url = BuildUrl(portal.PortalUrl, endpointPath, new Dictionary<string, string>
         {
             ["type"] = "itv",
             ["action"] = "create_link",
@@ -406,5 +477,6 @@ public class StalkerPortalClient
     public void ClearSession(string portalId)
     {
         _sessions.Remove(portalId);
+        _portalEndpoints.Remove(portalId);
     }
 }
